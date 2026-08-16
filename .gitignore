@@ -1,0 +1,36 @@
+# user-provided source attachments
+/uploads/
+
+# local tool and package-manager state
+/.cache/
+/.config/
+/.local/
+/.npm/
+
+# dependencies
+/node_modules
+/.pnp
+.pnp.*
+
+# Next.js
+/.next/
+/out/
+
+# test output
+/coverage/
+
+# local environment and secrets
+.env
+.env.*
+!.env.example
+
+# logs
+*.log
+
+# OS/editor
+.DS_Store
+*.swp
+
+# TypeScript
+*.tsbuildinfo
+next-env.d.ts
