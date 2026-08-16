@@ -2,12 +2,38 @@
 
 Single-tenant SMS waitlist operations for filling last-minute dental cancellations.
 
-The project is being delivered phase by phase. See `docs/architecture.md`, `docs/database.md`, and `agent.md` before making changes.
+Read `agent.md`, `docs/architecture.md`, and `docs/database.md` before making changes. The operating rules in `agent.md` take precedence over implementation prompts.
+
+## Current scope
+
+Phases 0–4 are complete: the application scaffold, strict environment validation, isolated Supabase clients, database migrations and RLS, atomic slot claiming, real-PostgreSQL invariant tests, pure logic modules, Supabase staff authentication, the responsive application shell, the searchable patient list, and browser-only mapped CSV imports are in place. Campaigns, n8n workflows, the operational inbox, dashboard metrics, and settings controls belong to later phases.
 
 ## Local setup
 
-1. Install dependencies with `pnpm install`.
-2. Copy `.env.example` to `.env.local` and replace every placeholder.
-3. Run `pnpm dev`.
+1. Install Node.js 22 or newer and pnpm 10.15.
+2. Run `pnpm install --frozen-lockfile`.
+3. Copy `.env.example` to `.env.local` and replace every placeholder.
+4. Run `pnpm dev`.
 
-Never commit a local environment file or real patient data.
+The application fails closed at startup when required environment variables are missing or malformed. Never commit a local environment file or real patient data.
+
+The `pnpm.overrides` entries for `postcss` and `sharp` are deliberate security patches for transitive versions pinned by Next.js 15. Keep them until the Next.js dependency tree resolves to patched versions on its own.
+
+## Verification
+
+```bash
+pnpm lint
+pnpm typecheck
+pnpm test
+pnpm build
+pnpm audit
+
+# Requires a disposable PostgreSQL 15 database ending in _test:
+DATABASE_URL='postgresql://postgres:postgres@localhost:5432/ghost_buster_test' pnpm test:db
+```
+
+`pnpm build` requires a valid local environment. After a production build, confirm that server secrets are absent from the client bundle:
+
+```bash
+! grep -R "SERVICE_ROLE\|N8N_SHARED_SECRET" .next/static
+```

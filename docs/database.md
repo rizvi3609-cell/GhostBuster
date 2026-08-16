@@ -258,6 +258,25 @@ create table import_batches (
 );
 ```
 
+### `import_batch_chunks` — idempotent CSV batch ledger
+
+Added in migration `0014_patient_import_batches.sql`. Browser parsing sends only validated rows in batches of at most 500. Each `(import_batch_id, batch_number)` is recorded once, so retrying a network request returns the original counts without double-counting or re-importing the chunk.
+
+```sql
+create table import_batch_chunks (
+  import_batch_id uuid not null references import_batches(id) on delete cascade,
+  batch_number int not null,
+  row_count int not null check (row_count between 1 and 500),
+  inserted_count int not null,
+  updated_count int not null,
+  skipped_count int not null,
+  created_at timestamptz not null default now(),
+  primary key (import_batch_id, batch_number)
+);
+```
+
+`import_patient_batch()` locks the parent import, upserts only name, phone, visit date, and procedures, and therefore cannot overwrite `opted_out` or `consent_status`. `finalize_patient_import()` verifies the totals and emits exactly one `CSV_IMPORTED` audit event.
+
 ### `audit_events`
 
 ```sql
@@ -387,6 +406,7 @@ alter table sms_logs            enable row level security;
 alter table unhandled_inbox     enable row level security;
 alter table scheduled_messages  enable row level security;
 alter table import_batches      enable row level security;
+alter table import_batch_chunks enable row level security;
 alter table audit_events        enable row level security;
 alter table clinic_config       enable row level security;
 alter table slot_templates      enable row level security;
@@ -439,6 +459,7 @@ The browser gets the **anon** key only, and only to subscribe to Realtime on the
 0011_triggers.sql
 0012_rls_policies.sql
 0013_seed_config_and_templates.sql
+0014_patient_import_batches.sql
 ```
 
 Each file is forward-only and idempotent (`if not exists` / `create or replace`). Never edit a shipped migration; add a new one.
