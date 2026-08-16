@@ -94,3 +94,35 @@ export const ImportCountsSchema = z.object({
 })
 
 export type ImportCounts = z.infer<typeof ImportCountsSchema>
+
+export const CampaignPreviewInput = z
+  .object({ templateId: z.string().uuid() })
+  .strict()
+
+export const CreateCampaignInput = z
+  .object({
+    templateId: z.string().uuid(),
+    appointmentLocal: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/),
+    wavePlan: z.unknown().optional(),
+  })
+  .strict()
+
+export const CampaignIdInput = z
+  .object({ campaignId: z.string().uuid() })
+  .strict()
+
+export const CancelCampaignInput = z
+  .object({
+    campaignId: z.string().uuid(),
+    reason: z.string().trim().min(1).max(200),
+  })
+  .strict()
+
+export const ManualAssignInput = z
+  .object({
+    campaignId: z.string().uuid(),
+    patientId: z.string().uuid(),
+  })
+  .strict()

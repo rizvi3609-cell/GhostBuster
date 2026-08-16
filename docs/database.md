@@ -460,6 +460,8 @@ The browser gets the **anon** key only, and only to subscribe to Realtime on the
 0012_rls_policies.sql
 0013_seed_config_and_templates.sql
 0014_patient_import_batches.sql
+0015_campaign_lifecycle.sql
+0016_wave_engine_functions.sql
 ```
 
 Each file is forward-only and idempotent (`if not exists` / `create or replace`). Never edit a shipped migration; add a new one.

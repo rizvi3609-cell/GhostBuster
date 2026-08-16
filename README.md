@@ -6,7 +6,7 @@ Read `agent.md`, `docs/architecture.md`, and `docs/database.md` before making ch
 
 ## Current scope
 
-Phases 0–4 are complete: the application scaffold, strict environment validation, isolated Supabase clients, database migrations and RLS, atomic slot claiming, real-PostgreSQL invariant tests, pure logic modules, Supabase staff authentication, the responsive application shell, the searchable patient list, and browser-only mapped CSV imports are in place. Campaigns, n8n workflows, the operational inbox, dashboard metrics, and settings controls belong to later phases.
+Phases 0–5 are complete: the scaffold, database and RLS foundation, atomic claims, pure logic modules, staff authentication, responsive shell, patient management and CSV import, campaign creation/detail controls, and the signed n8n campaign/wave workflows are in place. Inbound Twilio routing, the operational inbox, dashboard metrics, settings controls, and optional V2 automation belong to later phases.
 
 ## Local setup
 
