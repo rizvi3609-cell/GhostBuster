@@ -137,6 +137,17 @@ For high-value slots: reserve as `PENDING_PAYMENT` with `claim_expires_at`, send
 | Stripe → n8n | Stripe signature validation on every event |
 | n8n → Postgres | Dedicated service credential stored in n8n Credentials Manager |
 
+### 6.1 Supabase client separation
+
+The application uses two credential tiers and never mixes them:
+
+- `lib/supabase/server.ts` uses the service-role key for server-only database work.
+- Anon-key clients remain RLS-scoped:
+  - `lib/supabase/auth-server.ts` is request-scoped and cookie-aware for server-side Auth only.
+  - `lib/supabase/client.ts` is browser-only and reserved for Realtime.
+
+See `docs/decisions/0001-supabase-ssr-auth-client.md` for the Phase 3 decision record.
+
 ## 7. Environment variables
 
 **Vercel (all server-side; nothing prefixed `NEXT_PUBLIC_` except the two marked)**
@@ -144,8 +155,8 @@ For high-value slots: reserve as `PENDING_PAYMENT` with `claim_expires_at`, send
 ```
 SUPABASE_URL
 SUPABASE_SERVICE_ROLE_KEY
-NEXT_PUBLIC_SUPABASE_URL         # Realtime subscribe only
-NEXT_PUBLIC_SUPABASE_ANON_KEY    # Realtime subscribe only, RLS-scoped
+NEXT_PUBLIC_SUPABASE_URL         # SSR Auth and browser Realtime
+NEXT_PUBLIC_SUPABASE_ANON_KEY    # SSR Auth and browser Realtime, RLS-scoped
 N8N_BASE_URL
 N8N_SHARED_SECRET
 CLINIC_NAME
@@ -210,6 +221,7 @@ app/
   actions/settings.ts
 lib/
   supabase/server.ts        # service-role client, server-only
+  supabase/auth-server.ts   # request-scoped anon client, Auth only
   supabase/client.ts        # anon client, Realtime only
   n8n/client.ts             # signed webhook caller
   phone.ts                  # E.164 normalization
@@ -219,7 +231,7 @@ lib/
 components/
 supabase/migrations/
 n8n/waitlist-engine.json
-docs/                       # these six files
+docs/                       # these six files plus accepted decision records
 ```
 
 ## 11. Out of scope for V1
