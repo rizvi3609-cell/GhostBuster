@@ -24,5 +24,6 @@ The runner:
 3. Verifies opt-out preservation, replay-safe chunks, one audit event, and a 5,000-row CSV import in ten 500-row batches.
 4. Verifies triggers and expired payment-reservation release.
 5. Verifies RLS on every table and deny-by-default browser privileges.
-6. Starts two independent `psql` connections against one campaign at the same timestamp and requires exactly one `claim_slot` winner.
-7. Loads 20,000 eligible patients and requires `EXPLAIN ANALYZE` to use `patients_eligible_idx` rather than a sequential patient scan.
+6. Verifies DRAFT activation, recipient reservation before send, replay blocking, pause/cancel, manual fill, and the post-wait state recheck.
+7. Starts two independent `psql` connections against one campaign at the same timestamp and requires exactly one `claim_slot` winner.
+8. Loads 20,000 eligible patients and requires `EXPLAIN ANALYZE` to use the hot-path indexes.

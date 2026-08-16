@@ -71,6 +71,7 @@ begin
     'patients',
     'broadcast_campaigns',
     'campaign_recipients',
+    'campaign_wave_runs',
     'sms_logs',
     'unhandled_inbox',
     'scheduled_messages',
