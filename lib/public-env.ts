@@ -1,8 +1,17 @@
 import { z } from "zod"
 
 const PublicEnv = z.object({
-  NEXT_PUBLIC_SUPABASE_URL: z.string().url(),
-  NEXT_PUBLIC_SUPABASE_ANON_KEY: z.string().min(1),
+  NEXT_PUBLIC_SUPABASE_URL: z
+    .string()
+    .trim()
+    .url()
+    .refine((value) => {
+      const protocol = new URL(value).protocol
+      return protocol === "http:" || protocol === "https:"
+    }, "must use http or https"),
+  NEXT_PUBLIC_SUPABASE_ANON_KEY: z
+    .string()
+    .refine((value) => value.trim().length > 0, "must not be empty"),
 })
 
 const parsed = PublicEnv.safeParse({
@@ -11,8 +20,14 @@ const parsed = PublicEnv.safeParse({
 })
 
 if (!parsed.success) {
-  const names = parsed.error.issues.map((issue) => issue.path.join(".")).join(", ")
-  throw new Error(`Invalid public environment configuration: ${names}`)
+  const details = parsed.error.issues.map((issue) => {
+    const name = issue.path.join(".") || "environment"
+    return `- ${name}: ${issue.message}`
+  })
+
+  throw new Error(
+    ["Invalid public environment configuration:", ...details].join("\n"),
+  )
 }
 
 export const publicEnv = parsed.data
