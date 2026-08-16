@@ -1,3 +1,1280 @@
-{
-  "workflows": []
-}
+[
+  {
+    "id": "ghostbuster-campaign-start",
+    "name": "Ghost-Buster \u2014 Campaign Start",
+    "active": false,
+    "nodes": [
+      {
+        "id": "campaign-start-webhook",
+        "name": "Campaign Start Webhook",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2,
+        "position": [
+          0,
+          0
+        ],
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "campaign-start",
+          "responseMode": "responseNode",
+          "options": {
+            "rawBody": true
+          }
+        }
+      },
+      {
+        "id": "verify-shared-secret-signature",
+        "name": "Verify Shared Secret Signature",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          220,
+          0
+        ],
+        "parameters": {
+          "jsCode": "const crypto = require('crypto');\nconst headers = $json.headers || {};\nconst timestamp = String(headers['x-ghostbuster-timestamp'] || headers['X-Ghostbuster-Timestamp'] || '');\nconst supplied = String(headers['x-ghostbuster-signature'] || headers['X-Ghostbuster-Signature'] || '');\nconst rawBody = String($json.rawBody || JSON.stringify($json.body || {}));\nconst seconds = Number(timestamp);\nconst fresh = Number.isFinite(seconds) && Math.abs(Math.floor(Date.now() / 1000) - seconds) <= 300;\nconst expected = crypto.createHmac('sha256', $env.GHOSTBUSTER_SHARED_SECRET).update(`${timestamp}.${rawBody}`).digest('hex');\nconst sameLength = supplied.length === expected.length;\nconst valid = fresh && sameLength && crypto.timingSafeEqual(Buffer.from(supplied), Buffer.from(expected));\nreturn [{ json: { valid, campaignId: $json.body?.campaignId || null } }];"
+        }
+      },
+      {
+        "id": "signature-valid?",
+        "name": "Signature Valid?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2,
+        "position": [
+          440,
+          0
+        ],
+        "parameters": {
+          "conditions": {
+            "boolean": [
+              {
+                "value1": "={{$json.valid}}",
+                "value2": true
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "reject-unsigned-request",
+        "name": "Reject Unsigned Request",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1,
+        "position": [
+          660,
+          180
+        ],
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={\"accepted\":false,\"error\":\"unauthorized\"}",
+          "options": {
+            "responseCode": 401
+          }
+        }
+      },
+      {
+        "id": "re-read-campaign-and-kill-switch",
+        "name": "Re-read Campaign and Kill Switch",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.6,
+        "position": [
+          660,
+          -80
+        ],
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "select c.id as campaign_id, c.status, c.appointment_time, c.clinic_timezone,\n       config.timezone, config.quiet_hours_start, config.quiet_hours_end,\n       config.automation_paused\n  from public.broadcast_campaigns c\n cross join public.clinic_config config\n where c.id = $1::uuid;",
+          "options": {
+            "queryReplacement": "={{[$json.campaignId]}}"
+          }
+        },
+        "credentials": {
+          "postgres": {
+            "id": "GHOSTBUSTER_POSTGRES_CREDENTIAL_ID",
+            "name": "Ghost-Buster Postgres"
+          }
+        }
+      },
+      {
+        "id": "automation-running?",
+        "name": "Automation Running?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2,
+        "position": [
+          880,
+          -80
+        ],
+        "parameters": {
+          "conditions": {
+            "boolean": [
+              {
+                "value1": "={{!$json.automation_paused}}",
+                "value2": true
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "automation-paused-response",
+        "name": "Automation Paused Response",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1,
+        "position": [
+          1100,
+          100
+        ],
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={\"accepted\":false,\"reason\":\"automation_paused\"}",
+          "options": {
+            "responseCode": 202
+          }
+        }
+      },
+      {
+        "id": "compute-next-allowed-window",
+        "name": "Compute Next Allowed Window",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1100,
+          -120
+        ],
+        "parameters": {
+          "jsCode": "const row = $json;\nconst now = new Date();\nconst timezone = row.timezone || row.clinic_timezone;\nconst start = String(row.quiet_hours_start).slice(0, 5);\nconst end = String(row.quiet_hours_end).slice(0, 5);\nconst parts = new Intl.DateTimeFormat('en-CA', { timeZone: timezone, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(now);\nconst values = Object.fromEntries(parts.map((part) => [part.type, part.value]));\nconst minute = Number(values.hour) * 60 + Number(values.minute);\nconst [sh, sm] = start.split(':').map(Number);\nconst [eh, em] = end.split(':').map(Number);\nconst startMinute = sh * 60 + sm;\nconst endMinute = eh * 60 + em;\nconst within = startMinute !== endMinute && (startMinute < endMinute ? minute >= startMinute && minute < endMinute : minute >= startMinute || minute < endMinute);\nif (within) return [{ json: { ...row, withinWindow: true, nextAllowedAt: now.toISOString() } }];\nlet candidate = new Date(Math.floor(now.getTime() / 60000) * 60000 + 60000);\nfor (;;) {\n  const candidateParts = new Intl.DateTimeFormat('en-CA', { timeZone: timezone, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(candidate);\n  const candidateValues = Object.fromEntries(candidateParts.map((part) => [part.type, part.value]));\n  const candidateMinute = Number(candidateValues.hour) * 60 + Number(candidateValues.minute);\n  const allowed = startMinute !== endMinute && (startMinute < endMinute ? candidateMinute >= startMinute && candidateMinute < endMinute : candidateMinute >= startMinute || candidateMinute < endMinute);\n  if (allowed) return [{ json: { ...row, withinWindow: false, nextAllowedAt: candidate.toISOString() } }];\n  candidate = new Date(candidate.getTime() + 60000);\n}"
+        }
+      },
+      {
+        "id": "within-sending-window?",
+        "name": "Within Sending Window?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2,
+        "position": [
+          1320,
+          -120
+        ],
+        "parameters": {
+          "conditions": {
+            "boolean": [
+              {
+                "value1": "={{$json.withinWindow}}",
+                "value2": true
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "deferred-accepted-response",
+        "name": "Deferred Accepted Response",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1,
+        "position": [
+          1540,
+          120
+        ],
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={\"accepted\":true,\"executionId\":\"{{$execution.id}}\",\"deferred\":true}",
+          "options": {
+            "responseCode": 202
+          }
+        }
+      },
+      {
+        "id": "wait-until-allowed-window",
+        "name": "Wait Until Allowed Window",
+        "type": "n8n-nodes-base.wait",
+        "typeVersion": 1.1,
+        "position": [
+          1760,
+          120
+        ],
+        "parameters": {
+          "resume": "specificTime",
+          "dateTime": "={{$('Compute Next Allowed Window').first().json.nextAllowedAt}}"
+        }
+      },
+      {
+        "id": "re-read-campaign-after-wait",
+        "name": "Re-read Campaign After Wait",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.6,
+        "position": [
+          1760,
+          60
+        ],
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "select c.id as campaign_id, c.status, c.appointment_time, c.clinic_timezone,\n       config.timezone, config.quiet_hours_start, config.quiet_hours_end,\n       config.automation_paused\n  from public.broadcast_campaigns c\n cross join public.clinic_config config\n where c.id = $1::uuid;",
+          "options": {
+            "queryReplacement": "={{[$('Verify Shared Secret Signature').first().json.campaignId]}}"
+          }
+        },
+        "credentials": {
+          "postgres": {
+            "id": "GHOSTBUSTER_POSTGRES_CREDENTIAL_ID",
+            "name": "Ghost-Buster Postgres"
+          }
+        }
+      },
+      {
+        "id": "still-draft-and-running?",
+        "name": "Still Draft and Running?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2,
+        "position": [
+          1980,
+          60
+        ],
+        "parameters": {
+          "conditions": {
+            "boolean": [
+              {
+                "value1": "={{!$json.automation_paused && $json.status === 'DRAFT'}}",
+                "value2": true
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "atomic-activate-campaign",
+        "name": "Atomic Activate Campaign",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.6,
+        "position": [
+          1760,
+          -160
+        ],
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "select public.activate_campaign($1::uuid) as activated;",
+          "options": {
+            "queryReplacement": "={{[$('Verify Shared Secret Signature').first().json.campaignId]}}"
+          }
+        },
+        "credentials": {
+          "postgres": {
+            "id": "GHOSTBUSTER_POSTGRES_CREDENTIAL_ID",
+            "name": "Ghost-Buster Postgres"
+          }
+        }
+      },
+      {
+        "id": "campaign-activated?",
+        "name": "Campaign Activated?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2,
+        "position": [
+          2200,
+          -100
+        ],
+        "parameters": {
+          "conditions": {
+            "boolean": [
+              {
+                "value1": "={{$json.activated}}",
+                "value2": true
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "run-wave-engine",
+        "name": "Run Wave Engine",
+        "type": "n8n-nodes-base.executeWorkflow",
+        "typeVersion": 1.2,
+        "position": [
+          2420,
+          -160
+        ],
+        "parameters": {
+          "workflowId": {
+            "__rl": true,
+            "value": "ghostbuster-wave-engine",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "campaignId": "={{$('Verify Shared Secret Signature').first().json.campaignId}}"
+            }
+          },
+          "options": {
+            "waitForSubWorkflow": false
+          }
+        }
+      },
+      {
+        "id": "accepted-response",
+        "name": "Accepted Response",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1,
+        "position": [
+          2640,
+          -160
+        ],
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={\"accepted\":true,\"executionId\":\"{{$execution.id}}\"}",
+          "options": {
+            "responseCode": 202
+          }
+        }
+      },
+      {
+        "id": "no-op-response",
+        "name": "No-op Response",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1,
+        "position": [
+          2420,
+          40
+        ],
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={\"accepted\":false,\"reason\":\"state_changed\"}",
+          "options": {
+            "responseCode": 202
+          }
+        }
+      }
+    ],
+    "connections": {
+      "Campaign Start Webhook": {
+        "main": [
+          [
+            {
+              "node": "Verify Shared Secret Signature",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Verify Shared Secret Signature": {
+        "main": [
+          [
+            {
+              "node": "Signature Valid?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Signature Valid?": {
+        "main": [
+          [
+            {
+              "node": "Re-read Campaign and Kill Switch",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Reject Unsigned Request",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Re-read Campaign and Kill Switch": {
+        "main": [
+          [
+            {
+              "node": "Automation Running?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Automation Running?": {
+        "main": [
+          [
+            {
+              "node": "Compute Next Allowed Window",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Automation Paused Response",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Compute Next Allowed Window": {
+        "main": [
+          [
+            {
+              "node": "Within Sending Window?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Within Sending Window?": {
+        "main": [
+          [
+            {
+              "node": "Atomic Activate Campaign",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Deferred Accepted Response",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Deferred Accepted Response": {
+        "main": [
+          [
+            {
+              "node": "Wait Until Allowed Window",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Wait Until Allowed Window": {
+        "main": [
+          [
+            {
+              "node": "Re-read Campaign After Wait",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Re-read Campaign After Wait": {
+        "main": [
+          [
+            {
+              "node": "Still Draft and Running?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Still Draft and Running?": {
+        "main": [
+          [
+            {
+              "node": "Atomic Activate Campaign",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "No-op Response",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Atomic Activate Campaign": {
+        "main": [
+          [
+            {
+              "node": "Campaign Activated?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Campaign Activated?": {
+        "main": [
+          [
+            {
+              "node": "Run Wave Engine",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "No-op Response",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Run Wave Engine": {
+        "main": [
+          [
+            {
+              "node": "Accepted Response",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "settings": {
+      "executionOrder": "v1",
+      "errorWorkflow": "ghostbuster-error-handler"
+    },
+    "pinData": {},
+    "versionId": "00000000-0000-4000-8000-000000000051",
+    "meta": {
+      "templateCredsSetupCompleted": false
+    }
+  },
+  {
+    "id": "ghostbuster-wave-engine",
+    "name": "Ghost-Buster \u2014 Wave Engine",
+    "active": false,
+    "nodes": [
+      {
+        "id": "wave-engine-trigger",
+        "name": "Wave Engine Trigger",
+        "type": "n8n-nodes-base.executeWorkflowTrigger",
+        "typeVersion": 1.1,
+        "position": [
+          0,
+          0
+        ],
+        "parameters": {
+          "workflowInputs": {
+            "values": [
+              {
+                "name": "campaignId"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "check-kill-switch",
+        "name": "Check Kill Switch",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.6,
+        "position": [
+          220,
+          0
+        ],
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "select automation_paused from public.clinic_config where id = true;"
+        },
+        "credentials": {
+          "postgres": {
+            "id": "GHOSTBUSTER_POSTGRES_CREDENTIAL_ID",
+            "name": "Ghost-Buster Postgres"
+          }
+        }
+      },
+      {
+        "id": "kill-switch-off?",
+        "name": "Kill Switch Off?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2,
+        "position": [
+          440,
+          0
+        ],
+        "parameters": {
+          "conditions": {
+            "boolean": [
+              {
+                "value1": "={{!$json.automation_paused}}",
+                "value2": true
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "re-read-campaign-state",
+        "name": "Re-read Campaign State",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.6,
+        "position": [
+          660,
+          -80
+        ],
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "select c.id as campaign_id, c.status, c.appointment_time, c.clinic_timezone,\n       config.timezone, config.quiet_hours_start, config.quiet_hours_end,\n       config.automation_paused\n  from public.broadcast_campaigns c\n cross join public.clinic_config config\n where c.id = $1::uuid;",
+          "options": {
+            "queryReplacement": "={{[$('Wave Engine Trigger').first().json.campaignId]}}"
+          }
+        },
+        "credentials": {
+          "postgres": {
+            "id": "GHOSTBUSTER_POSTGRES_CREDENTIAL_ID",
+            "name": "Ghost-Buster Postgres"
+          }
+        }
+      },
+      {
+        "id": "campaign-still-claimable?",
+        "name": "Campaign Still Claimable?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2,
+        "position": [
+          880,
+          -80
+        ],
+        "parameters": {
+          "conditions": {
+            "boolean": [
+              {
+                "value1": "={{['OPEN','ESCALATING'].includes($json.status)}}",
+                "value2": true
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "check-quiet-hours",
+        "name": "Check Quiet Hours",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1100,
+          -100
+        ],
+        "parameters": {
+          "jsCode": "const row = $json;\nconst now = new Date();\nconst timezone = row.timezone || row.clinic_timezone;\nconst start = String(row.quiet_hours_start).slice(0, 5);\nconst end = String(row.quiet_hours_end).slice(0, 5);\nconst parts = new Intl.DateTimeFormat('en-CA', { timeZone: timezone, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(now);\nconst values = Object.fromEntries(parts.map((part) => [part.type, part.value]));\nconst minute = Number(values.hour) * 60 + Number(values.minute);\nconst [sh, sm] = start.split(':').map(Number);\nconst [eh, em] = end.split(':').map(Number);\nconst startMinute = sh * 60 + sm;\nconst endMinute = eh * 60 + em;\nconst within = startMinute !== endMinute && (startMinute < endMinute ? minute >= startMinute && minute < endMinute : minute >= startMinute || minute < endMinute);\nif (within) return [{ json: { ...row, withinWindow: true, nextAllowedAt: now.toISOString() } }];\nlet candidate = new Date(Math.floor(now.getTime() / 60000) * 60000 + 60000);\nfor (;;) {\n  const candidateParts = new Intl.DateTimeFormat('en-CA', { timeZone: timezone, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(candidate);\n  const candidateValues = Object.fromEntries(candidateParts.map((part) => [part.type, part.value]));\n  const candidateMinute = Number(candidateValues.hour) * 60 + Number(candidateValues.minute);\n  const allowed = startMinute !== endMinute && (startMinute < endMinute ? candidateMinute >= startMinute && candidateMinute < endMinute : candidateMinute >= startMinute || candidateMinute < endMinute);\n  if (allowed) return [{ json: { ...row, withinWindow: false, nextAllowedAt: candidate.toISOString() } }];\n  candidate = new Date(candidate.getTime() + 60000);\n}"
+        }
+      },
+      {
+        "id": "send-window-open?",
+        "name": "Send Window Open?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2,
+        "position": [
+          1320,
+          -100
+        ],
+        "parameters": {
+          "conditions": {
+            "boolean": [
+              {
+                "value1": "={{$json.withinWindow}}",
+                "value2": true
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "defer-to-allowed-window",
+        "name": "Defer to Allowed Window",
+        "type": "n8n-nodes-base.wait",
+        "typeVersion": 1.1,
+        "position": [
+          1540,
+          80
+        ],
+        "parameters": {
+          "resume": "specificTime",
+          "dateTime": "={{$json.nextAllowedAt}}"
+        }
+      },
+      {
+        "id": "atomic-reserve-next-wave",
+        "name": "Atomic Reserve Next Wave",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.6,
+        "position": [
+          1540,
+          -140
+        ],
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "select * from public.reserve_next_campaign_wave($1::uuid);",
+          "options": {
+            "queryReplacement": "={{[$('Wave Engine Trigger').first().json.campaignId]}}"
+          }
+        },
+        "credentials": {
+          "postgres": {
+            "id": "GHOSTBUSTER_POSTGRES_CREDENTIAL_ID",
+            "name": "Ghost-Buster Postgres"
+          }
+        },
+        "alwaysOutputData": true
+      },
+      {
+        "id": "recipients-reserved?",
+        "name": "Recipients Reserved?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2,
+        "position": [
+          1760,
+          -140
+        ],
+        "parameters": {
+          "conditions": {
+            "string": [
+              {
+                "value1": "={{$json.patient_id || ''}}",
+                "operation": "isNotEmpty"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "loop-over-reserved-recipients",
+        "name": "Loop Over Reserved Recipients",
+        "type": "n8n-nodes-base.splitInBatches",
+        "typeVersion": 3,
+        "position": [
+          1980,
+          -180
+        ],
+        "parameters": {
+          "batchSize": 1,
+          "options": {}
+        }
+      },
+      {
+        "id": "recheck-five-send-preconditions",
+        "name": "Recheck Five Send Preconditions",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.6,
+        "position": [
+          2200,
+          -60
+        ],
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "select public.check_campaign_send_eligibility($1::uuid, $2::uuid) as eligibility;",
+          "options": {
+            "queryReplacement": "={{[$json.campaign_id,$json.patient_id]}}"
+          }
+        },
+        "credentials": {
+          "postgres": {
+            "id": "GHOSTBUSTER_POSTGRES_CREDENTIAL_ID",
+            "name": "Ghost-Buster Postgres"
+          }
+        }
+      },
+      {
+        "id": "recipient-still-eligible?",
+        "name": "Recipient Still Eligible?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2,
+        "position": [
+          2420,
+          -60
+        ],
+        "parameters": {
+          "conditions": {
+            "string": [
+              {
+                "value1": "={{$json.eligibility}}",
+                "value2": "ALLOWED"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "compose-patient-safe-sms",
+        "name": "Compose Patient-safe SMS",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          2640,
+          -140
+        ],
+        "parameters": {
+          "jsCode": "const source = $('Loop Over Reserved Recipients').item.json;\nconst when = new Intl.DateTimeFormat('en-US', { timeZone: source.clinic_timezone, dateStyle: 'medium', timeStyle: 'short' }).format(new Date(source.appointment_time));\nreturn [{ json: { ...source, messageBody: `${source.clinic_name}: an opening is available ${when}. Reply YES to claim it. Reply STOP to opt out.` } }];"
+        }
+      },
+      {
+        "id": "send-via-twilio-messaging-service",
+        "name": "Send via Twilio Messaging Service",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          2860,
+          -140
+        ],
+        "parameters": {
+          "method": "POST",
+          "url": "=https://api.twilio.com/2010-04-01/Accounts/{{$vars.TWILIO_ACCOUNT_SID}}/Messages.json",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpBasicAuth",
+          "sendBody": true,
+          "contentType": "form-urlencoded",
+          "bodyParameters": {
+            "parameters": [
+              {
+                "name": "To",
+                "value": "={{$json.phone_number}}"
+              },
+              {
+                "name": "MessagingServiceSid",
+                "value": "={{$vars.TWILIO_MESSAGING_SERVICE_SID}}"
+              },
+              {
+                "name": "Body",
+                "value": "={{$json.messageBody}}"
+              }
+            ]
+          },
+          "options": {
+            "timeout": 10000
+          }
+        },
+        "credentials": {
+          "httpBasicAuth": {
+            "id": "TWILIO_HTTP_BASIC_CREDENTIAL_ID",
+            "name": "Twilio API"
+          }
+        }
+      },
+      {
+        "id": "record-twilio-result",
+        "name": "Record Twilio Result",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.6,
+        "position": [
+          3080,
+          -140
+        ],
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "select public.record_campaign_sms($1::uuid,$2::uuid,$3,$4,$5::public.sms_status,$6);",
+          "options": {
+            "queryReplacement": "={{[$('Compose Patient-safe SMS').item.json.campaign_id,$('Compose Patient-safe SMS').item.json.patient_id,$json.sid,$('Compose Patient-safe SMS').item.json.messageBody,'QUEUED',$json.error_code || null]}}"
+          }
+        },
+        "credentials": {
+          "postgres": {
+            "id": "GHOSTBUSTER_POSTGRES_CREDENTIAL_ID",
+            "name": "Ghost-Buster Postgres"
+          }
+        }
+      },
+      {
+        "id": "mark-recipient-skipped",
+        "name": "Mark Recipient Skipped",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.6,
+        "position": [
+          2640,
+          40
+        ],
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "select public.mark_campaign_recipient_skipped($1::uuid,$2::uuid);",
+          "options": {
+            "queryReplacement": "={{[$('Loop Over Reserved Recipients').item.json.campaign_id,$('Loop Over Reserved Recipients').item.json.patient_id]}}"
+          }
+        },
+        "credentials": {
+          "postgres": {
+            "id": "GHOSTBUSTER_POSTGRES_CREDENTIAL_ID",
+            "name": "Ghost-Buster Postgres"
+          }
+        }
+      },
+      {
+        "id": "complete-wave",
+        "name": "Complete Wave",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.6,
+        "position": [
+          2200,
+          -260
+        ],
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "select public.complete_campaign_wave($1::uuid,$2::int) as next_wave_at;",
+          "options": {
+            "queryReplacement": "={{[$('Atomic Reserve Next Wave').first().json.campaign_id,$('Atomic Reserve Next Wave').first().json.wave_number]}}"
+          }
+        },
+        "credentials": {
+          "postgres": {
+            "id": "GHOSTBUSTER_POSTGRES_CREDENTIAL_ID",
+            "name": "Ghost-Buster Postgres"
+          }
+        }
+      },
+      {
+        "id": "wait-wave-delay",
+        "name": "Wait Wave Delay",
+        "type": "n8n-nodes-base.wait",
+        "typeVersion": 1.1,
+        "position": [
+          2420,
+          -260
+        ],
+        "parameters": {
+          "amount": "={{$('Atomic Reserve Next Wave').first().json.delay_min}}",
+          "unit": "minutes"
+        }
+      }
+    ],
+    "connections": {
+      "Wave Engine Trigger": {
+        "main": [
+          [
+            {
+              "node": "Check Kill Switch",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Check Kill Switch": {
+        "main": [
+          [
+            {
+              "node": "Kill Switch Off?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Kill Switch Off?": {
+        "main": [
+          [
+            {
+              "node": "Re-read Campaign State",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          []
+        ]
+      },
+      "Re-read Campaign State": {
+        "main": [
+          [
+            {
+              "node": "Campaign Still Claimable?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Campaign Still Claimable?": {
+        "main": [
+          [
+            {
+              "node": "Check Quiet Hours",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          []
+        ]
+      },
+      "Check Quiet Hours": {
+        "main": [
+          [
+            {
+              "node": "Send Window Open?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Send Window Open?": {
+        "main": [
+          [
+            {
+              "node": "Atomic Reserve Next Wave",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Defer to Allowed Window",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Defer to Allowed Window": {
+        "main": [
+          [
+            {
+              "node": "Re-read Campaign State",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Atomic Reserve Next Wave": {
+        "main": [
+          [
+            {
+              "node": "Recipients Reserved?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Recipients Reserved?": {
+        "main": [
+          [
+            {
+              "node": "Loop Over Reserved Recipients",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          []
+        ]
+      },
+      "Loop Over Reserved Recipients": {
+        "main": [
+          [
+            {
+              "node": "Complete Wave",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Recheck Five Send Preconditions",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Recheck Five Send Preconditions": {
+        "main": [
+          [
+            {
+              "node": "Recipient Still Eligible?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Recipient Still Eligible?": {
+        "main": [
+          [
+            {
+              "node": "Compose Patient-safe SMS",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Mark Recipient Skipped",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Compose Patient-safe SMS": {
+        "main": [
+          [
+            {
+              "node": "Send via Twilio Messaging Service",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Send via Twilio Messaging Service": {
+        "main": [
+          [
+            {
+              "node": "Record Twilio Result",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Record Twilio Result": {
+        "main": [
+          [
+            {
+              "node": "Loop Over Reserved Recipients",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Mark Recipient Skipped": {
+        "main": [
+          [
+            {
+              "node": "Loop Over Reserved Recipients",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Complete Wave": {
+        "main": [
+          [
+            {
+              "node": "Wait Wave Delay",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Wait Wave Delay": {
+        "main": [
+          [
+            {
+              "node": "Re-read Campaign State",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "settings": {
+      "executionOrder": "v1",
+      "errorWorkflow": "ghostbuster-error-handler"
+    },
+    "pinData": {},
+    "versionId": "00000000-0000-4000-8000-000000000052",
+    "meta": {
+      "templateCredsSetupCompleted": false
+    }
+  },
+  {
+    "id": "ghostbuster-error-handler",
+    "name": "Ghost-Buster \u2014 Error Handler",
+    "active": false,
+    "nodes": [
+      {
+        "id": "workflow-error-trigger",
+        "name": "Workflow Error Trigger",
+        "type": "n8n-nodes-base.errorTrigger",
+        "typeVersion": 1,
+        "position": [
+          0,
+          0
+        ],
+        "parameters": {}
+      },
+      {
+        "id": "write-automation-error-audit",
+        "name": "Write Automation Error Audit",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.6,
+        "position": [
+          240,
+          0
+        ],
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "insert into public.audit_events(actor_type,event_type,entity_type,metadata) values ('AUTOMATION','AUTOMATION_ERROR','workflow',jsonb_build_object('workflow',$1,'execution_id',$2));",
+          "options": {
+            "queryReplacement": "={{[$json.workflow.name,$json.execution.id]}}"
+          }
+        },
+        "credentials": {
+          "postgres": {
+            "id": "GHOSTBUSTER_POSTGRES_CREDENTIAL_ID",
+            "name": "Ghost-Buster Postgres"
+          }
+        }
+      },
+      {
+        "id": "notify-operations",
+        "name": "Notify Operations",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          480,
+          0
+        ],
+        "parameters": {
+          "method": "POST",
+          "url": "={{$vars.OPERATIONS_ALERT_WEBHOOK_URL}}",
+          "sendBody": true,
+          "contentType": "json",
+          "jsonBody": "={\"text\":\"Ghost-Buster automation failed\",\"workflow\":\"{{$json.workflow.name}}\",\"executionId\":\"{{$json.execution.id}}\"}",
+          "options": {
+            "timeout": 5000
+          }
+        }
+      }
+    ],
+    "connections": {
+      "Workflow Error Trigger": {
+        "main": [
+          [
+            {
+              "node": "Write Automation Error Audit",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Write Automation Error Audit": {
+        "main": [
+          [
+            {
+              "node": "Notify Operations",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "settings": {
+      "executionOrder": "v1"
+    },
+    "pinData": {},
+    "versionId": "00000000-0000-4000-8000-000000000053",
+    "meta": {
+      "templateCredsSetupCompleted": false
+    }
+  }
+]
