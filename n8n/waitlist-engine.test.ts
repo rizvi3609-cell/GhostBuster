@@ -116,6 +116,15 @@ describe("n8n waitlist engine export", () => {
     )
   })
 
+  it("logs kill-switch aborts before campaign or wave termination", () => {
+    expect(nodeNames(workflow("Ghost-Buster — Campaign Start"))).toContain(
+      "Log Campaign Start Kill Switch Abort",
+    )
+    expect(nodeNames(workflow("Ghost-Buster — Wave Engine"))).toContain(
+      "Log Wave Kill Switch Abort",
+    )
+  })
+
   it("authenticates and reserves manual replies before Twilio sending", () => {
     const names = nodeNames(workflow("Ghost-Buster — Manual Reply"))
     expect(names.indexOf("Verify Manual Reply Signature")).toBeLessThan(
