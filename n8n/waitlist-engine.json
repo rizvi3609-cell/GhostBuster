@@ -2009,6 +2009,88 @@
             "responseCode": 200
           }
         }
+      },
+      {
+        "id": "read-claimed-campaign-state",
+        "name": "Read Claimed Campaign State",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.6,
+        "position": [
+          3740,
+          -260
+        ],
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "select status from public.broadcast_campaigns where id=$1::uuid;",
+          "options": {
+            "queryReplacement": "={{[$('Atomic Claim').first().json.campaign_id]}}"
+          }
+        },
+        "credentials": {
+          "postgres": {
+            "id": "GHOSTBUSTER_POSTGRES_CREDENTIAL_ID",
+            "name": "Ghost-Buster Postgres"
+          }
+        }
+      },
+      {
+        "id": "deposit-required",
+        "name": "Deposit Required?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2,
+        "position": [
+          3960,
+          -260
+        ],
+        "parameters": {
+          "conditions": {
+            "boolean": [
+              {
+                "value1": "={{$json.status === 'PENDING_PAYMENT'}}",
+                "value2": true
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "create-unique-stripe-payment-link",
+        "name": "Create Unique Stripe Payment Link",
+        "type": "n8n-nodes-base.executeWorkflow",
+        "typeVersion": 1.2,
+        "position": [
+          4180,
+          -320
+        ],
+        "parameters": {
+          "workflowId": {
+            "__rl": true,
+            "value": "ghostbuster-stripe-deposit-link",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "campaignId": "={{$('Atomic Claim').first().json.campaign_id}}"
+            }
+          },
+          "options": {
+            "waitForSubWorkflow": true
+          }
+        }
+      },
+      {
+        "id": "compose-deposit-required-reply",
+        "name": "Compose Deposit Required Reply",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          4400,
+          -320
+        ],
+        "parameters": {
+          "jsCode": "const patient=$('Resolve Patient').first().json; const inbound=$('Normalize Phone and Classify Keyword').first().json; return [{json:{patientId:patient.id,campaignId:$json.campaignId,to:inbound.phone,messageBody:`Your opening is reserved for 10 minutes. Complete the deposit here: ${$json.paymentLinkUrl}`}}];"
+        }
       }
     ],
     "connections": {
@@ -2292,7 +2374,7 @@
         "main": [
           [
             {
-              "node": "Compose Winner Confirmation",
+              "node": "Read Claimed Campaign State",
               "type": "main",
               "index": 0
             }
@@ -2377,6 +2459,57 @@
           [
             {
               "node": "Acknowledge Processed Inbound",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Read Claimed Campaign State": {
+        "main": [
+          [
+            {
+              "node": "Deposit Required?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Deposit Required?": {
+        "main": [
+          [
+            {
+              "node": "Create Unique Stripe Payment Link",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Compose Winner Confirmation",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Create Unique Stripe Payment Link": {
+        "main": [
+          [
+            {
+              "node": "Compose Deposit Required Reply",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Compose Deposit Required Reply": {
+        "main": [
+          [
+            {
+              "node": "Send Transactional Twilio Reply",
               "type": "main",
               "index": 0
             }
@@ -2966,6 +3099,1386 @@
     },
     "pinData": {},
     "versionId": "00000000-0000-4000-8000-000000000071",
+    "meta": {
+      "templateCredsSetupCompleted": false
+    }
+  },
+  {
+    "id": "ghostbuster-stripe-deposit-link",
+    "name": "Ghost-Buster \u2014 Stripe Deposit Link",
+    "active": false,
+    "nodes": [
+      {
+        "id": "stripe-deposit-trigger",
+        "name": "Stripe Deposit Trigger",
+        "type": "n8n-nodes-base.executeWorkflowTrigger",
+        "typeVersion": 1.1,
+        "position": [
+          0,
+          0
+        ],
+        "parameters": {
+          "workflowInputs": {
+            "values": [
+              {
+                "name": "campaignId"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "get-pending-payment-reservation",
+        "name": "Get Pending Payment Reservation",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.6,
+        "position": [
+          220,
+          0
+        ],
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "select * from public.get_pending_payment_reservation($1::uuid);",
+          "options": {
+            "queryReplacement": "={{[$json.campaignId]}}"
+          }
+        },
+        "credentials": {
+          "postgres": {
+            "id": "GHOSTBUSTER_POSTGRES_CREDENTIAL_ID",
+            "name": "Ghost-Buster Postgres"
+          }
+        }
+      },
+      {
+        "id": "create-stripe-deposit-product",
+        "name": "Create Stripe Deposit Product",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          440,
+          0
+        ],
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.stripe.com/v1/products",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendBody": true,
+          "contentType": "form-urlencoded",
+          "bodyParameters": {
+            "parameters": [
+              {
+                "name": "name",
+                "value": "Appointment deposit"
+              }
+            ]
+          },
+          "options": {
+            "timeout": 10000
+          }
+        },
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "STRIPE_API_CREDENTIAL_ID",
+            "name": "Stripe API"
+          }
+        }
+      },
+      {
+        "id": "create-stripe-deposit-price",
+        "name": "Create Stripe Deposit Price",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          660,
+          0
+        ],
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.stripe.com/v1/prices",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendBody": true,
+          "contentType": "form-urlencoded",
+          "bodyParameters": {
+            "parameters": [
+              {
+                "name": "currency",
+                "value": "usd"
+              },
+              {
+                "name": "unit_amount",
+                "value": "={{Math.round($('Get Pending Payment Reservation').first().json.amount_usd*100)}}"
+              },
+              {
+                "name": "product",
+                "value": "={{$json.id}}"
+              }
+            ]
+          },
+          "options": {
+            "timeout": 10000
+          }
+        },
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "STRIPE_API_CREDENTIAL_ID",
+            "name": "Stripe API"
+          }
+        }
+      },
+      {
+        "id": "create-unique-stripe-payment-link",
+        "name": "Create Unique Stripe Payment Link",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          880,
+          0
+        ],
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.stripe.com/v1/payment_links",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendBody": true,
+          "contentType": "form-urlencoded",
+          "bodyParameters": {
+            "parameters": [
+              {
+                "name": "line_items[0][price]",
+                "value": "={{$json.id}}"
+              },
+              {
+                "name": "line_items[0][quantity]",
+                "value": "1"
+              },
+              {
+                "name": "metadata[campaign_id]",
+                "value": "={{$('Get Pending Payment Reservation').first().json.campaign_id}}"
+              },
+              {
+                "name": "metadata[reservation_id]",
+                "value": "={{$('Get Pending Payment Reservation').first().json.reservation_id}}"
+              },
+              {
+                "name": "payment_intent_data[metadata][campaign_id]",
+                "value": "={{$('Get Pending Payment Reservation').first().json.campaign_id}}"
+              }
+            ]
+          },
+          "options": {
+            "timeout": 10000
+          }
+        },
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "STRIPE_API_CREDENTIAL_ID",
+            "name": "Stripe API"
+          }
+        }
+      },
+      {
+        "id": "attach-stripe-link-to-reservation",
+        "name": "Attach Stripe Link to Reservation",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.6,
+        "position": [
+          1100,
+          0
+        ],
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "select public.attach_stripe_payment_link($1::uuid,$2,$3) as attached;",
+          "options": {
+            "queryReplacement": "={{[$('Get Pending Payment Reservation').first().json.reservation_id,$json.id,$json.url]}}"
+          }
+        },
+        "credentials": {
+          "postgres": {
+            "id": "GHOSTBUSTER_POSTGRES_CREDENTIAL_ID",
+            "name": "Ghost-Buster Postgres"
+          }
+        }
+      },
+      {
+        "id": "return-payment-link",
+        "name": "Return Payment Link",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1320,
+          0
+        ],
+        "parameters": {
+          "jsCode": "const reservation=$('Get Pending Payment Reservation').first().json; const link=$('Create Unique Stripe Payment Link').first().json; return [{json:{campaignId:reservation.campaign_id,reservationId:reservation.reservation_id,paymentLinkId:link.id,paymentLinkUrl:link.url,expiresAt:reservation.expires_at}}];"
+        }
+      }
+    ],
+    "connections": {
+      "Stripe Deposit Trigger": {
+        "main": [
+          [
+            {
+              "node": "Get Pending Payment Reservation",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Get Pending Payment Reservation": {
+        "main": [
+          [
+            {
+              "node": "Create Stripe Deposit Product",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Create Stripe Deposit Product": {
+        "main": [
+          [
+            {
+              "node": "Create Stripe Deposit Price",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Create Stripe Deposit Price": {
+        "main": [
+          [
+            {
+              "node": "Create Unique Stripe Payment Link",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Create Unique Stripe Payment Link": {
+        "main": [
+          [
+            {
+              "node": "Attach Stripe Link to Reservation",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Attach Stripe Link to Reservation": {
+        "main": [
+          [
+            {
+              "node": "Return Payment Link",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "settings": {
+      "executionOrder": "v1",
+      "errorWorkflow": "ghostbuster-error-handler"
+    },
+    "pinData": {},
+    "versionId": "00000000-0000-4000-8000-000000000091",
+    "meta": {
+      "templateCredsSetupCompleted": false
+    }
+  },
+  {
+    "id": "ghostbuster-stripe-handler",
+    "name": "Ghost-Buster \u2014 Stripe Handler",
+    "active": false,
+    "nodes": [
+      {
+        "id": "stripe-webhook",
+        "name": "Stripe Webhook",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2,
+        "position": [
+          0,
+          0
+        ],
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "stripe-handler",
+          "responseMode": "responseNode",
+          "options": {
+            "rawBody": true
+          }
+        }
+      },
+      {
+        "id": "verify-stripe-signature",
+        "name": "Verify Stripe Signature",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          220,
+          0
+        ],
+        "parameters": {
+          "jsCode": "const crypto=require('crypto');\nconst header=String(($json.headers||{})['stripe-signature']||'');\nconst raw=String($json.rawBody||JSON.stringify($json.body||{}));\nconst values=Object.fromEntries(header.split(',').map((part)=>part.split('=')));\nconst timestamp=Number(values.t||0);\nconst expected=crypto.createHmac('sha256',$env.STRIPE_WEBHOOK_SECRET).update(`${timestamp}.${raw}`).digest('hex');\nconst supplied=String(values.v1||'');\nconst valid=Math.abs(Math.floor(Date.now()/1000)-timestamp)<=300 && supplied.length===expected.length && crypto.timingSafeEqual(Buffer.from(supplied),Buffer.from(expected));\nreturn [{json:{valid,event:$json.body||{}}}];"
+        }
+      },
+      {
+        "id": "stripe-signature-valid",
+        "name": "Stripe Signature Valid?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2,
+        "position": [
+          440,
+          0
+        ],
+        "parameters": {
+          "conditions": {
+            "boolean": [
+              {
+                "value1": "={{$json.valid}}",
+                "value2": true
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "reject-forged-stripe-event",
+        "name": "Reject Forged Stripe Event",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1,
+        "position": [
+          660,
+          160
+        ],
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={\"received\":false}",
+          "options": {
+            "responseCode": 400
+          }
+        }
+      },
+      {
+        "id": "insert-stripe-event-idempotency-key",
+        "name": "Insert Stripe Event Idempotency Key",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.6,
+        "position": [
+          660,
+          -80
+        ],
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "select public.ingest_stripe_event($1,$2) as inserted;",
+          "options": {
+            "queryReplacement": "={{[$json.event.id,$json.event.type]}}"
+          }
+        },
+        "credentials": {
+          "postgres": {
+            "id": "GHOSTBUSTER_POSTGRES_CREDENTIAL_ID",
+            "name": "Ghost-Buster Postgres"
+          }
+        }
+      },
+      {
+        "id": "first-stripe-event-delivery",
+        "name": "First Stripe Event Delivery?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2,
+        "position": [
+          880,
+          -80
+        ],
+        "parameters": {
+          "conditions": {
+            "boolean": [
+              {
+                "value1": "={{$json.inserted}}",
+                "value2": true
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "acknowledge-stripe-replay",
+        "name": "Acknowledge Stripe Replay",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1,
+        "position": [
+          1100,
+          120
+        ],
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={\"received\":true}",
+          "options": {
+            "responseCode": 200
+          }
+        }
+      },
+      {
+        "id": "payment-completed-event",
+        "name": "Payment Completed Event?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2,
+        "position": [
+          1100,
+          -120
+        ],
+        "parameters": {
+          "conditions": {
+            "boolean": [
+              {
+                "value1": "={{$('Verify Stripe Signature').first().json.event.type === 'checkout.session.completed'}}",
+                "value2": true
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "promote-reservation-to-filled",
+        "name": "Promote Reservation to Filled",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.6,
+        "position": [
+          1320,
+          -180
+        ],
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "select public.complete_stripe_payment($1,$2) as campaign_id;",
+          "options": {
+            "queryReplacement": "={{[$('Verify Stripe Signature').first().json.event.data.object.payment_link,$('Verify Stripe Signature').first().json.event.id]}}"
+          }
+        },
+        "credentials": {
+          "postgres": {
+            "id": "GHOSTBUSTER_POSTGRES_CREDENTIAL_ID",
+            "name": "Ghost-Buster Postgres"
+          }
+        }
+      },
+      {
+        "id": "deactivate-paid-stripe-link",
+        "name": "Deactivate Paid Stripe Link",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1540,
+          -180
+        ],
+        "parameters": {
+          "method": "POST",
+          "url": "=https://api.stripe.com/v1/payment_links/{{$('Verify Stripe Signature').first().json.event.data.object.payment_link}}",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendBody": true,
+          "contentType": "form-urlencoded",
+          "bodyParameters": {
+            "parameters": [
+              {
+                "name": "active",
+                "value": "false"
+              }
+            ]
+          },
+          "options": {
+            "timeout": 10000
+          }
+        },
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "STRIPE_API_CREDENTIAL_ID",
+            "name": "Stripe API"
+          }
+        }
+      },
+      {
+        "id": "acknowledge-stripe-event",
+        "name": "Acknowledge Stripe Event",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1,
+        "position": [
+          1760,
+          -100
+        ],
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={\"received\":true}",
+          "options": {
+            "responseCode": 200
+          }
+        }
+      },
+      {
+        "id": "payment-failed-or-expired",
+        "name": "Payment Failed or Expired?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2,
+        "position": [
+          1320,
+          40
+        ],
+        "parameters": {
+          "conditions": {
+            "boolean": [
+              {
+                "value1": "={{['checkout.session.expired','checkout.session.async_payment_failed'].includes($('Verify Stripe Signature').first().json.event.type)}}",
+                "value2": true
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "release-failed-stripe-reservation",
+        "name": "Release Failed Stripe Reservation",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.6,
+        "position": [
+          1540,
+          20
+        ],
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "select public.fail_stripe_payment($1,$2) as campaign_id;",
+          "options": {
+            "queryReplacement": "={{[$('Verify Stripe Signature').first().json.event.data.object.payment_link,$('Verify Stripe Signature').first().json.event.id]}}"
+          }
+        },
+        "credentials": {
+          "postgres": {
+            "id": "GHOSTBUSTER_POSTGRES_CREDENTIAL_ID",
+            "name": "Ghost-Buster Postgres"
+          }
+        }
+      },
+      {
+        "id": "deactivate-failed-stripe-link",
+        "name": "Deactivate Failed Stripe Link",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1760,
+          20
+        ],
+        "parameters": {
+          "method": "POST",
+          "url": "=https://api.stripe.com/v1/payment_links/{{$('Verify Stripe Signature').first().json.event.data.object.payment_link}}",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendBody": true,
+          "contentType": "form-urlencoded",
+          "bodyParameters": {
+            "parameters": [
+              {
+                "name": "active",
+                "value": "false"
+              }
+            ]
+          },
+          "options": {
+            "timeout": 10000
+          }
+        },
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "STRIPE_API_CREDENTIAL_ID",
+            "name": "Stripe API"
+          }
+        }
+      },
+      {
+        "id": "resume-failed-payment-wave",
+        "name": "Resume Failed Payment Wave",
+        "type": "n8n-nodes-base.executeWorkflow",
+        "typeVersion": 1.2,
+        "position": [
+          1980,
+          20
+        ],
+        "parameters": {
+          "workflowId": {
+            "__rl": true,
+            "value": "ghostbuster-wave-engine",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "campaignId": "={{$('Release Failed Stripe Reservation').first().json.campaign_id}}"
+            }
+          },
+          "options": {
+            "waitForSubWorkflow": false
+          }
+        }
+      }
+    ],
+    "connections": {
+      "Stripe Webhook": {
+        "main": [
+          [
+            {
+              "node": "Verify Stripe Signature",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Verify Stripe Signature": {
+        "main": [
+          [
+            {
+              "node": "Stripe Signature Valid?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Stripe Signature Valid?": {
+        "main": [
+          [
+            {
+              "node": "Insert Stripe Event Idempotency Key",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Reject Forged Stripe Event",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Insert Stripe Event Idempotency Key": {
+        "main": [
+          [
+            {
+              "node": "First Stripe Event Delivery?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "First Stripe Event Delivery?": {
+        "main": [
+          [
+            {
+              "node": "Payment Completed Event?",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Acknowledge Stripe Replay",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Payment Completed Event?": {
+        "main": [
+          [
+            {
+              "node": "Promote Reservation to Filled",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Payment Failed or Expired?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Promote Reservation to Filled": {
+        "main": [
+          [
+            {
+              "node": "Deactivate Paid Stripe Link",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Deactivate Paid Stripe Link": {
+        "main": [
+          [
+            {
+              "node": "Acknowledge Stripe Event",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Payment Failed or Expired?": {
+        "main": [
+          [
+            {
+              "node": "Release Failed Stripe Reservation",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Acknowledge Stripe Event",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Release Failed Stripe Reservation": {
+        "main": [
+          [
+            {
+              "node": "Deactivate Failed Stripe Link",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Deactivate Failed Stripe Link": {
+        "main": [
+          [
+            {
+              "node": "Resume Failed Payment Wave",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Resume Failed Payment Wave": {
+        "main": [
+          [
+            {
+              "node": "Acknowledge Stripe Event",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "settings": {
+      "executionOrder": "v1",
+      "errorWorkflow": "ghostbuster-error-handler"
+    },
+    "pinData": {},
+    "versionId": "00000000-0000-4000-8000-000000000092",
+    "meta": {
+      "templateCredsSetupCompleted": false
+    }
+  },
+  {
+    "id": "ghostbuster-daily-jobs",
+    "name": "Ghost-Buster \u2014 Daily Jobs",
+    "active": false,
+    "nodes": [
+      {
+        "id": "daily-jobs-schedule",
+        "name": "Daily Jobs Schedule",
+        "type": "n8n-nodes-base.scheduleTrigger",
+        "typeVersion": 1.2,
+        "position": [
+          0,
+          0
+        ],
+        "parameters": {
+          "rule": {
+            "interval": [
+              {
+                "field": "hours",
+                "hoursInterval": 24
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "read-daily-feature-flags",
+        "name": "Read Daily Feature Flags",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.6,
+        "position": [
+          220,
+          0
+        ],
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "select feature_recalls,feature_reviews from public.clinic_config where id=true;",
+          "options": {
+            "queryReplacement": "={{[]}}"
+          }
+        },
+        "credentials": {
+          "postgres": {
+            "id": "GHOSTBUSTER_POSTGRES_CREDENTIAL_ID",
+            "name": "Ghost-Buster Postgres"
+          }
+        }
+      },
+      {
+        "id": "recalls-enabled",
+        "name": "Recalls Enabled?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2,
+        "position": [
+          440,
+          -120
+        ],
+        "parameters": {
+          "conditions": {
+            "boolean": [
+              {
+                "value1": "={{$env.FEATURE_RECALLS === 'true' && $json.feature_recalls}}",
+                "value2": true
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "reserve-recall-range-cohort",
+        "name": "Reserve Recall Range Cohort",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.6,
+        "position": [
+          660,
+          -160
+        ],
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "select * from public.reserve_due_recalls();",
+          "options": {
+            "queryReplacement": "={{[]}}"
+          }
+        },
+        "credentials": {
+          "postgres": {
+            "id": "GHOSTBUSTER_POSTGRES_CREDENTIAL_ID",
+            "name": "Ghost-Buster Postgres"
+          }
+        }
+      },
+      {
+        "id": "load-due-recall-messages",
+        "name": "Load Due Recall Messages",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.6,
+        "position": [
+          880,
+          -160
+        ],
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "select * from public.get_due_scheduled_messages('RECALL');",
+          "options": {
+            "queryReplacement": "={{[]}}"
+          }
+        },
+        "credentials": {
+          "postgres": {
+            "id": "GHOSTBUSTER_POSTGRES_CREDENTIAL_ID",
+            "name": "Ghost-Buster Postgres"
+          }
+        },
+        "alwaysOutputData": true
+      },
+      {
+        "id": "reviews-enabled",
+        "name": "Reviews Enabled?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2,
+        "position": [
+          440,
+          100
+        ],
+        "parameters": {
+          "conditions": {
+            "boolean": [
+              {
+                "value1": "={{$env.FEATURE_REVIEWS === 'true' && $json.feature_reviews}}",
+                "value2": true
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "load-due-review-requests",
+        "name": "Load Due Review Requests",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.6,
+        "position": [
+          660,
+          100
+        ],
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "select * from public.get_due_scheduled_messages('REVIEW_REQUEST');",
+          "options": {
+            "queryReplacement": "={{[]}}"
+          }
+        },
+        "credentials": {
+          "postgres": {
+            "id": "GHOSTBUSTER_POSTGRES_CREDENTIAL_ID",
+            "name": "Ghost-Buster Postgres"
+          }
+        },
+        "alwaysOutputData": true
+      },
+      {
+        "id": "release-expired-deposit-reservations",
+        "name": "Release Expired Deposit Reservations",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.6,
+        "position": [
+          440,
+          260
+        ],
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "select * from public.release_expired_reservations();",
+          "options": {
+            "queryReplacement": "={{[]}}"
+          }
+        },
+        "credentials": {
+          "postgres": {
+            "id": "GHOSTBUSTER_POSTGRES_CREDENTIAL_ID",
+            "name": "Ghost-Buster Postgres"
+          }
+        },
+        "alwaysOutputData": true
+      },
+      {
+        "id": "resume-released-campaign-waves",
+        "name": "Resume Released Campaign Waves",
+        "type": "n8n-nodes-base.executeWorkflow",
+        "typeVersion": 1.2,
+        "position": [
+          660,
+          260
+        ],
+        "parameters": {
+          "workflowId": {
+            "__rl": true,
+            "value": "ghostbuster-wave-engine",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "campaignId": "={{$json.campaign_id}}"
+            }
+          },
+          "options": {
+            "waitForSubWorkflow": false
+          }
+        }
+      },
+      {
+        "id": "refresh-reliability-scores",
+        "name": "Refresh Reliability Scores",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.6,
+        "position": [
+          440,
+          380
+        ],
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "select public.refresh_reliability_scores();",
+          "options": {
+            "queryReplacement": "={{[]}}"
+          }
+        },
+        "credentials": {
+          "postgres": {
+            "id": "GHOSTBUSTER_POSTGRES_CREDENTIAL_ID",
+            "name": "Ghost-Buster Postgres"
+          }
+        }
+      },
+      {
+        "id": "merge-due-scheduled-messages",
+        "name": "Merge Due Scheduled Messages",
+        "type": "n8n-nodes-base.merge",
+        "typeVersion": 3,
+        "position": [
+          1100,
+          -40
+        ],
+        "parameters": {
+          "mode": "append"
+        }
+      },
+      {
+        "id": "loop-scheduled-messages",
+        "name": "Loop Scheduled Messages",
+        "type": "n8n-nodes-base.splitInBatches",
+        "typeVersion": 3,
+        "position": [
+          1320,
+          -40
+        ],
+        "parameters": {
+          "batchSize": 1,
+          "options": {}
+        }
+      },
+      {
+        "id": "check-scheduled-five-preconditions",
+        "name": "Check Scheduled Five Preconditions",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.6,
+        "position": [
+          1540,
+          40
+        ],
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "select public.check_scheduled_message_eligibility($1::uuid) as eligibility;",
+          "options": {
+            "queryReplacement": "={{[$json.scheduled_message_id]}}"
+          }
+        },
+        "credentials": {
+          "postgres": {
+            "id": "GHOSTBUSTER_POSTGRES_CREDENTIAL_ID",
+            "name": "Ghost-Buster Postgres"
+          }
+        }
+      },
+      {
+        "id": "scheduled-message-allowed",
+        "name": "Scheduled Message Allowed?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2,
+        "position": [
+          1760,
+          40
+        ],
+        "parameters": {
+          "conditions": {
+            "boolean": [
+              {
+                "value1": "={{$json.eligibility === 'ALLOWED'}}",
+                "value2": true
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "compose-recall-or-review-copy",
+        "name": "Compose Recall or Review Copy",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1980,
+          -40
+        ],
+        "parameters": {
+          "jsCode": "const source=$('Loop Scheduled Messages').item.json; const messageBody=source.message_kind==='RECALL'?'It is time to schedule your next visit. Call the clinic when convenient. Reply STOP to opt out.':`Thank you for visiting. You can leave a review here: ${source.review_url} Reply STOP to opt out.`; return [{json:{...source,messageBody}}];"
+        }
+      },
+      {
+        "id": "send-scheduled-twilio-message",
+        "name": "Send Scheduled Twilio Message",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          2200,
+          -40
+        ],
+        "parameters": {
+          "method": "POST",
+          "url": "=https://api.twilio.com/2010-04-01/Accounts/{{$vars.TWILIO_ACCOUNT_SID}}/Messages.json",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpBasicAuth",
+          "sendBody": true,
+          "contentType": "form-urlencoded",
+          "bodyParameters": {
+            "parameters": [
+              {
+                "name": "To",
+                "value": "={{$json.phone_number}}"
+              },
+              {
+                "name": "MessagingServiceSid",
+                "value": "={{$vars.TWILIO_MESSAGING_SERVICE_SID}}"
+              },
+              {
+                "name": "Body",
+                "value": "={{$json.messageBody}}"
+              }
+            ]
+          },
+          "options": {
+            "timeout": 10000
+          }
+        },
+        "credentials": {
+          "httpBasicAuth": {
+            "id": "TWILIO_HTTP_BASIC_CREDENTIAL_ID",
+            "name": "Twilio API"
+          }
+        }
+      },
+      {
+        "id": "complete-scheduled-message",
+        "name": "Complete Scheduled Message",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.6,
+        "position": [
+          2420,
+          -40
+        ],
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "select public.complete_scheduled_message($1::uuid,$2,$3,'QUEUED'::public.sms_status,$4);",
+          "options": {
+            "queryReplacement": "={{[$('Compose Recall or Review Copy').item.json.scheduled_message_id,$json.sid,$('Compose Recall or Review Copy').item.json.messageBody,$json.error_code || null]}}"
+          }
+        },
+        "credentials": {
+          "postgres": {
+            "id": "GHOSTBUSTER_POSTGRES_CREDENTIAL_ID",
+            "name": "Ghost-Buster Postgres"
+          }
+        }
+      }
+    ],
+    "connections": {
+      "Daily Jobs Schedule": {
+        "main": [
+          [
+            {
+              "node": "Read Daily Feature Flags",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Read Daily Feature Flags": {
+        "main": [
+          [
+            {
+              "node": "Recalls Enabled?",
+              "type": "main",
+              "index": 0
+            },
+            {
+              "node": "Reviews Enabled?",
+              "type": "main",
+              "index": 0
+            },
+            {
+              "node": "Release Expired Deposit Reservations",
+              "type": "main",
+              "index": 0
+            },
+            {
+              "node": "Refresh Reliability Scores",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Recalls Enabled?": {
+        "main": [
+          [
+            {
+              "node": "Reserve Recall Range Cohort",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          []
+        ]
+      },
+      "Reserve Recall Range Cohort": {
+        "main": [
+          [
+            {
+              "node": "Load Due Recall Messages",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Load Due Recall Messages": {
+        "main": [
+          [
+            {
+              "node": "Merge Due Scheduled Messages",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Reviews Enabled?": {
+        "main": [
+          [
+            {
+              "node": "Load Due Review Requests",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          []
+        ]
+      },
+      "Load Due Review Requests": {
+        "main": [
+          [
+            {
+              "node": "Merge Due Scheduled Messages",
+              "type": "main",
+              "index": 1
+            }
+          ]
+        ]
+      },
+      "Release Expired Deposit Reservations": {
+        "main": [
+          [
+            {
+              "node": "Resume Released Campaign Waves",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Merge Due Scheduled Messages": {
+        "main": [
+          [
+            {
+              "node": "Loop Scheduled Messages",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Loop Scheduled Messages": {
+        "main": [
+          [],
+          [
+            {
+              "node": "Check Scheduled Five Preconditions",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Check Scheduled Five Preconditions": {
+        "main": [
+          [
+            {
+              "node": "Scheduled Message Allowed?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Scheduled Message Allowed?": {
+        "main": [
+          [
+            {
+              "node": "Compose Recall or Review Copy",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Loop Scheduled Messages",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Compose Recall or Review Copy": {
+        "main": [
+          [
+            {
+              "node": "Send Scheduled Twilio Message",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Send Scheduled Twilio Message": {
+        "main": [
+          [
+            {
+              "node": "Complete Scheduled Message",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Complete Scheduled Message": {
+        "main": [
+          [
+            {
+              "node": "Loop Scheduled Messages",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "settings": {
+      "executionOrder": "v1",
+      "errorWorkflow": "ghostbuster-error-handler"
+    },
+    "pinData": {},
+    "versionId": "00000000-0000-4000-8000-000000000093",
     "meta": {
       "templateCredsSetupCompleted": false
     }

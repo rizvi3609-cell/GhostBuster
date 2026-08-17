@@ -8,6 +8,9 @@
 4. `Ghost-Buster — Inbound Router`
 5. `Ghost-Buster — Status Reconciler`
 6. `Ghost-Buster — Manual Reply`
+7. `Ghost-Buster — Stripe Deposit Link`
+8. `Ghost-Buster — Stripe Handler`
+9. `Ghost-Buster — Daily Jobs`
 
 All workflows import inactive. Configure and test them before activation.
 
@@ -17,6 +20,7 @@ Map the placeholder credential IDs after import:
 
 - `Ghost-Buster Postgres`: dedicated Supabase Postgres/service credential.
 - `Twilio API`: HTTP Basic Auth with the Twilio Account SID as username and Auth Token as password.
+- `Stripe API`: HTTP Header Auth with `Authorization: Bearer <clinic Stripe secret key>`.
 
 Configure these n8n Variables:
 
@@ -26,7 +30,7 @@ Configure these n8n Variables:
 - `TWILIO_STATUS_WEBHOOK_URL` — exact public status-callback URL
 - `OPERATIONS_ALERT_WEBHOOK_URL`
 
-Configure `GHOSTBUSTER_SHARED_SECRET` and `TWILIO_AUTH_TOKEN` through n8n External Secrets or the managed instance environment. They are read only by signature-verification Code nodes and are never stored in the export.
+Configure `GHOSTBUSTER_SHARED_SECRET`, `TWILIO_AUTH_TOKEN`, `STRIPE_WEBHOOK_SECRET`, `FEATURE_RECALLS`, and `FEATURE_REVIEWS` through n8n External Secrets or the managed instance environment. They are read only by signature-verification Code nodes and are never stored in the export.
 
 ## Activation order
 
@@ -37,8 +41,10 @@ Configure `GHOSTBUSTER_SHARED_SECRET` and `TWILIO_AUTH_TOKEN` through n8n Extern
 5. Test forged and correctly signed Twilio inbound and status callbacks.
 6. Test a manual reply with the kill switch, opt-out, consent, quiet-hours, and frequency-cap branches.
 7. Activate Status Reconciler, Inbound Router, and Manual Reply.
-8. Activate Wave Engine.
-9. Activate Campaign Start last.
+8. Test Stripe webhook signature, successful payment, and expired reservation release in Stripe test mode.
+9. Activate Stripe Deposit Link, Stripe Handler, and Daily Jobs only for enabled deployment flags.
+10. Activate Wave Engine.
+11. Activate Campaign Start last.
 
 ## Safety behavior
 
@@ -54,4 +60,7 @@ Configure `GHOSTBUSTER_SHARED_SECRET` and `TWILIO_AUTH_TOKEN` through n8n Extern
 - HELP, opt-in, winner, loser, and no-offer replies are transactional, idempotently logged, and contain no clinical detail.
 - Delivery callbacks advance message state without regressing terminal statuses.
 - Manual replies reserve a unique request before Twilio, enforce all five outbound preconditions, and record both `sms_logs` and `MANUAL_REPLY_SENT` audit data after success.
+- Recall selection uses a 15-day range, so a failed daily run does not permanently skip patients.
+- Review links come only from clinic configuration and contain no patient identifier.
+- Deposit claims create one Stripe Payment Link per reservation with campaign/reservation metadata only; paid or expired links are deactivated.
 - Workflow logs must never be configured to retain full phone numbers or message bodies beyond n8n's minimum execution data required for recovery.

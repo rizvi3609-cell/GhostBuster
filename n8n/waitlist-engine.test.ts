@@ -36,6 +36,9 @@ describe("n8n waitlist engine export", () => {
       "Ghost-Buster — Inbound Router",
       "Ghost-Buster — Status Reconciler",
       "Ghost-Buster — Manual Reply",
+      "Ghost-Buster — Stripe Deposit Link",
+      "Ghost-Buster — Stripe Handler",
+      "Ghost-Buster — Daily Jobs",
     ])
   })
 
@@ -138,6 +141,24 @@ describe("n8n waitlist engine export", () => {
     )
   })
 
+  it("implements flagged recalls, reviews, Stripe verification, and expiry resume", () => {
+    const daily = nodeNames(workflow("Ghost-Buster — Daily Jobs"))
+    expect(daily).toEqual(expect.arrayContaining([
+      "Reserve Recall Range Cohort",
+      "Load Due Review Requests",
+      "Release Expired Deposit Reservations",
+      "Resume Released Campaign Waves",
+      "Refresh Reliability Scores",
+    ]))
+    const stripe = nodeNames(workflow("Ghost-Buster — Stripe Handler"))
+    expect(stripe.indexOf("Verify Stripe Signature")).toBeLessThan(
+      stripe.indexOf("Insert Stripe Event Idempotency Key"),
+    )
+    expect(stripe).toContain("Promote Reservation to Filled")
+    expect(stripe).toContain("Release Failed Stripe Reservation")
+    expect(stripe).toContain("Resume Failed Payment Wave")
+  })
+
   it("references only placeholder credential IDs and contains no plaintext key", () => {
     expect(raw).not.toMatch(/github_pat_|authToken|service_role_key|sk_live_/i)
     const credentialIds = workflows.flatMap((item) =>
@@ -149,6 +170,7 @@ describe("n8n waitlist engine export", () => {
       expect.arrayContaining([
         "GHOSTBUSTER_POSTGRES_CREDENTIAL_ID",
         "TWILIO_HTTP_BASIC_CREDENTIAL_ID",
+        "STRIPE_API_CREDENTIAL_ID",
       ]),
     )
     expect(
