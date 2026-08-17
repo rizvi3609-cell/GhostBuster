@@ -20,6 +20,9 @@ const ClinicConfig = z.object({
   feature_stripe_deposits: z.boolean(),
   feature_recalls: z.boolean(),
   feature_reviews: z.boolean(),
+  deposit_amount: z.coerce.number(),
+  review_url: z.string().url(),
+  review_cooldown_days: z.number().int(),
   updated_at: z.string(),
 })
 
@@ -31,7 +34,7 @@ const readClinicConfig = unstable_cache(
     const { data, error } = await db
       .from("clinic_config")
       .select(
-        "clinic_name, timezone, quiet_hours_start, quiet_hours_end, max_messages_per_week, estimated_chair_value, recall_threshold_days, recall_cooldown_days, default_wave_plan, automation_paused, feature_stripe_deposits, feature_recalls, feature_reviews, updated_at",
+        "clinic_name, timezone, quiet_hours_start, quiet_hours_end, max_messages_per_week, estimated_chair_value, recall_threshold_days, recall_cooldown_days, default_wave_plan, automation_paused, feature_stripe_deposits, feature_recalls, feature_reviews, deposit_amount, review_url, review_cooldown_days, updated_at",
       )
       .eq("id", true)
       .single()

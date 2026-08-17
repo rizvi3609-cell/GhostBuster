@@ -196,7 +196,7 @@ export default async function PatientsPage({ searchParams }: PatientsPageProps) 
             <tbody className="divide-y divide-border">
               {rows.data.map((patient) => (
                 <tr key={patient.id} className="hover:bg-surface-sunken/60">
-                  <td className="px-4 py-3 font-medium text-fg">{patient.full_name}</td>
+                  <td className="px-4 py-3 font-medium text-fg"><Link href={`/patients/${patient.id}`} className="hover:text-brand">{patient.full_name}</Link></td>
                   <td className="px-4 py-3 text-fg-muted"><PhoneDisplay phone={patient.phone_number} /></td>
                   <td className="px-4 py-3"><ConsentBadge status={patient.consent_status} /></td>
                   <td className="px-4 py-3 text-fg-muted">{patient.opted_out ? "Yes" : "No"}</td>

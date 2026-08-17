@@ -6,6 +6,7 @@ import { useState, useTransition } from "react"
 import {
   assignCampaignManually,
   cancelCampaign,
+  markAppointmentComplete,
   pauseCampaign,
 } from "@/app/actions/campaigns"
 
@@ -15,12 +16,13 @@ type RecipientOption = Readonly<{
 }>
 
 type CampaignActionsProps = Readonly<{
+  appointmentCompleted?: boolean
   campaignId: string
   recipients: readonly RecipientOption[]
   status: string
 }>
 
-export function CampaignActions({ campaignId, recipients, status }: CampaignActionsProps) {
+export function CampaignActions({ appointmentCompleted = false, campaignId, recipients, status }: CampaignActionsProps) {
   const router = useRouter()
   const [patientId, setPatientId] = useState(recipients[0]?.id ?? "")
   const [error, setError] = useState<string | null>(null)
@@ -47,6 +49,15 @@ export function CampaignActions({ campaignId, recipients, status }: CampaignActi
     })
   }
 
+  function complete(): void {
+    if (!window.confirm("Mark this appointment complete and schedule its review request?")) return
+    startTransition(async () => {
+      const result = await markAppointmentComplete({ campaignId })
+      if (!result.ok) setError(result.error)
+      else router.refresh()
+    })
+  }
+
   function assign(): void {
     if (!patientId || !window.confirm("Assign this patient and stop all later waves?")) return
     startTransition(async () => {
@@ -67,6 +78,11 @@ export function CampaignActions({ campaignId, recipients, status }: CampaignActi
         {cancellable ? (
           <button type="button" disabled={pending} onClick={cancel} className="min-h-11 rounded-lg border border-danger/40 px-4 font-medium text-danger hover:bg-danger/5 disabled:opacity-50">
             Cancel
+          </button>
+        ) : null}
+        {status === "FILLED" && !appointmentCompleted ? (
+          <button type="button" disabled={pending} onClick={complete} className="min-h-11 rounded-lg border border-success/40 px-4 font-medium text-success hover:bg-success/5 disabled:opacity-50">
+            Mark appointment complete
           </button>
         ) : null}
         {active && recipients.length > 0 ? (

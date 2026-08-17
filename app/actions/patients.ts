@@ -14,6 +14,16 @@ import {
 import { db } from "@/lib/supabase/server"
 
 const ImportBatchId = z.object({ id: z.string().uuid() })
+const ReliabilityOverrideInput = z
+  .object({
+    patientId: z.string().uuid(),
+    score: z.number().int().min(0).max(100),
+    reason: z.string().trim().min(3).max(300),
+  })
+  .strict()
+const ReliabilityPatientInput = z
+  .object({ patientId: z.string().uuid() })
+  .strict()
 const BatchCounts = z.object({
   inserted_count: z.number().int().nonnegative(),
   updated_count: z.number().int().nonnegative(),
@@ -111,6 +121,34 @@ export const importPatientBatch = withStaffAuth(async (context, raw: unknown) =>
   if (!counts.success) return databaseError()
 
   return { ok: true as const, data: counts.data[0] }
+})
+
+export const overridePatientReliability = withStaffAuth(async (context, raw: unknown) => {
+  const parsed = ReliabilityOverrideInput.safeParse(raw)
+  if (!parsed.success) return invalidInput()
+  const { data, error } = await db.rpc("override_patient_reliability", {
+    p_patient_id: parsed.data.patientId,
+    p_score: parsed.data.score,
+    p_reason: parsed.data.reason,
+    p_actor_id: context.staff.id,
+  })
+  if (error || data !== true) return databaseError()
+  revalidatePath(`/patients/${parsed.data.patientId}`)
+  revalidatePath("/patients")
+  return { ok: true as const, data: { score: parsed.data.score } }
+})
+
+export const clearPatientReliabilityOverride = withStaffAuth(async (context, raw: unknown) => {
+  const parsed = ReliabilityPatientInput.safeParse(raw)
+  if (!parsed.success) return invalidInput()
+  const { data, error } = await db.rpc("clear_patient_reliability_override", {
+    p_patient_id: parsed.data.patientId,
+    p_actor_id: context.staff.id,
+  })
+  if (error || data !== true) return databaseError()
+  revalidatePath(`/patients/${parsed.data.patientId}`)
+  revalidatePath("/patients")
+  return { ok: true as const, data: { cleared: true } }
 })
 
 export const finishPatientImport = withStaffAuth(async (context, raw: unknown) => {

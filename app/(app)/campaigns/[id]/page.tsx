@@ -19,6 +19,7 @@ const Campaign = z.object({
   claimed_by: z.string().uuid().nullable(),
   claimed_at: z.string().nullable(),
   next_wave_at: z.string().nullable(),
+  appointment_completed_at: z.string().nullable(),
 })
 const Recipient = z.object({
   patient_id: z.string().uuid(),
@@ -76,7 +77,7 @@ export default async function CampaignDetailPage({ params }: CampaignPageProps) 
   const [campaignResult, recipientResult, smsResult, auditResult] = await Promise.all([
     db
       .from("broadcast_campaigns")
-      .select("id, appointment_time, clinic_timezone, procedure_type, duration_min, status, wave_plan, current_wave, claimed_by, claimed_at, next_wave_at")
+      .select("id, appointment_time, clinic_timezone, procedure_type, duration_min, status, wave_plan, current_wave, claimed_by, claimed_at, next_wave_at, appointment_completed_at")
       .eq("id", id)
       .maybeSingle(),
     db
@@ -141,6 +142,7 @@ export default async function CampaignDetailPage({ params }: CampaignPageProps) 
           <span className="rounded-full border border-border-strong bg-surface px-3 py-1.5 text-sm font-semibold text-fg">{statusLabels[campaign.data.status]}</span>
         </div>
         <CampaignActions
+          appointmentCompleted={Boolean(campaign.data.appointment_completed_at)}
           campaignId={campaign.data.id}
           status={campaign.data.status}
           recipients={recipients.data.map((recipient) => {

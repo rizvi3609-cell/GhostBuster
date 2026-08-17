@@ -66,6 +66,13 @@ const InviteStaffInput = z
     role: StaffRole,
   })
   .strict()
+const V2SettingsInput = z
+  .object({
+    depositAmount: z.number().min(0).max(100_000),
+    reviewUrl: z.string().url().refine((value) => value.startsWith("https://")),
+    reviewCooldownDays: z.number().int().min(1).max(3_650),
+  })
+  .strict()
 const UpdateStaffInput = z
   .object({
     id: z.string().uuid(),
@@ -206,6 +213,23 @@ export const inviteStaffMember = withStaffAuth(
     return { ok: true as const, data: { id: invited.data.user.id } }
   },
   { allowedRoles: ["OWNER"] },
+)
+
+export const saveV2Settings = withStaffAuth(
+  async (context, raw: unknown) => {
+    const parsed = V2SettingsInput.safeParse(raw)
+    if (!parsed.success) return fail("INVALID_INPUT", "Review the V2 settings.")
+    const { data, error } = await db.rpc("save_v2_settings", {
+      p_actor_id: context.staff.id,
+      p_deposit_amount: parsed.data.depositAmount,
+      p_review_url: parsed.data.reviewUrl,
+      p_review_cooldown_days: parsed.data.reviewCooldownDays,
+    })
+    if (error || data !== true) return fail("DATABASE_ERROR", "Couldn't save V2 settings.")
+    refreshSettings()
+    return { ok: true as const, data: { saved: true } }
+  },
+  { allowedRoles: ["OWNER", "ADMIN"] },
 )
 
 export const updateStaffMember = withStaffAuth(

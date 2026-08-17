@@ -7,6 +7,7 @@ import {
   type SlotTemplateSetting,
 } from "@/components/settings/slot-template-settings"
 import { StaffSettings, type StaffSetting } from "@/components/settings/staff-settings"
+import { V2SettingsForm } from "@/components/settings/v2-settings-form"
 import { EmptyState } from "@/components/ui/empty-state"
 import { resolveStaffAuth } from "@/lib/auth"
 import { getClinicConfig } from "@/lib/config"
@@ -108,6 +109,7 @@ export default async function SettingsPage() {
       </header>
       <ClinicSettingsForm config={config} />
       <SlotTemplateSettings templates={templateSettings} />
+      <V2SettingsForm config={config} />
       {auth.data.staff.role === "OWNER" ? <StaffSettings members={staffSettings} /> : null}
       <KillSwitchCard
         paused={config.automation_paused}

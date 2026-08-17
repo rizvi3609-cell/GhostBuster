@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache"
 import { z } from "zod"
 
 import { withStaffAuth } from "@/lib/auth"
+import { env } from "@/lib/env"
 import { triggerCampaignStart } from "@/lib/n8n/client"
 import { isWithinSendingWindow, nextAllowedSendTime } from "@/lib/quiet-hours"
 import {
@@ -23,6 +24,7 @@ const Template = z.object({
   procedure_type: z.string(),
   duration_min: z.number().int().positive(),
   wave_plan: z.unknown().nullable(),
+  requires_deposit: z.boolean(),
 })
 
 const Config = z.object({
@@ -30,6 +32,7 @@ const Config = z.object({
   quiet_hours_start: z.string(),
   quiet_hours_end: z.string(),
   default_wave_plan: z.unknown(),
+  feature_stripe_deposits: z.boolean(),
 })
 
 const CampaignId = z.string().uuid()
@@ -57,13 +60,13 @@ async function loadTemplateAndConfig(templateId: string) {
   const [templateResult, configResult] = await Promise.all([
     db
       .from("slot_templates")
-      .select("id, label, procedure_type, duration_min, wave_plan")
+      .select("id, label, procedure_type, duration_min, wave_plan, requires_deposit")
       .eq("id", templateId)
       .eq("active", true)
       .maybeSingle(),
     db
       .from("clinic_config")
-      .select("timezone, quiet_hours_start, quiet_hours_end, default_wave_plan")
+      .select("timezone, quiet_hours_start, quiet_hours_end, default_wave_plan, feature_stripe_deposits")
       .eq("id", true)
       .single(),
   ])
@@ -126,13 +129,19 @@ export const createCampaign = withStaffAuth(async (context, raw: unknown) => {
     return failure("INVALID_INPUT", "Choose a future appointment time in the clinic timezone.")
   }
 
-  const { data, error } = await db.rpc("create_broadcast_campaign", {
+  const requiresDeposit = Boolean(
+    env.FEATURE_STRIPE_DEPOSITS &&
+      loaded.config.feature_stripe_deposits &&
+      loaded.template.requires_deposit,
+  )
+  const { data, error } = await db.rpc("create_broadcast_campaign_v2", {
     p_appointment_time: appointment.toISOString(),
     p_clinic_timezone: loaded.config.timezone,
     p_procedure_type: loaded.template.procedure_type,
     p_duration_min: loaded.template.duration_min,
     p_wave_plan: plan.plan,
     p_created_by: context.staff.id,
+    p_requires_deposit: requiresDeposit,
   })
   const campaignId = CampaignId.safeParse(data)
   if (error || !campaignId.success) {
@@ -214,6 +223,25 @@ export const cancelCampaign = withStaffAuth(async (context, raw: unknown) => {
   revalidatePath(`/campaigns/${parsed.data.campaignId}`)
   revalidatePath("/dashboard")
   return { ok: true as const, data: { campaignId: parsed.data.campaignId } }
+})
+
+export const markAppointmentComplete = withStaffAuth(async (context, raw: unknown) => {
+  const parsed = CampaignIdInput.safeParse(raw)
+  if (!parsed.success) return failure("INVALID_INPUT", "Invalid campaign.")
+  if (!env.FEATURE_REVIEWS) {
+    return failure("STATE_CONFLICT", "Review requests are disabled for this deployment.")
+  }
+
+  const { data, error } = await db.rpc("mark_appointment_complete", {
+    p_campaign_id: parsed.data.campaignId,
+    p_actor_id: context.staff.id,
+  })
+  if (error) return failure("DATABASE_ERROR", "Couldn't mark the appointment complete.")
+  if (!z.string().uuid().safeParse(data).success) {
+    return failure("STATE_CONFLICT", "Review requests are disabled, cooling down, or already scheduled.")
+  }
+  revalidatePath(`/campaigns/${parsed.data.campaignId}`)
+  return { ok: true as const, data: { scheduledMessageId: String(data) } }
 })
 
 export const assignCampaignManually = withStaffAuth(async (context, raw: unknown) => {
