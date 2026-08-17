@@ -74,6 +74,7 @@ begin
     'campaign_wave_runs',
     'sms_logs',
     'unhandled_inbox',
+    'manual_reply_requests',
     'scheduled_messages',
     'import_batches',
     'import_batch_chunks',
