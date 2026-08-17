@@ -6,7 +6,7 @@ Read `agent.md`, `docs/architecture.md`, and `docs/database.md` before making ch
 
 ## Current scope
 
-Phases 0–5 are complete: the scaffold, database and RLS foundation, atomic claims, pure logic modules, staff authentication, responsive shell, patient management and CSV import, campaign creation/detail controls, and the signed n8n campaign/wave workflows are in place. Inbound Twilio routing, the operational inbox, dashboard metrics, settings controls, and optional V2 automation belong to later phases.
+Phases 0–6 are complete: the scaffold, database and RLS foundation, atomic claims, pure logic modules, staff authentication, responsive shell, patient management and CSV import, campaign workflows, signed Twilio inbound routing, immediate opt-out enforcement, atomic reply claiming, and non-regressing delivery reconciliation are in place. The operational inbox, dashboard metrics, settings controls, and optional V2 automation belong to later phases.
 
 ## Local setup
 

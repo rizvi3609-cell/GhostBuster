@@ -42,6 +42,9 @@ psql "${psql_args[@]}" -f "$repo_root/supabase/tests/rls.test.sql"
 echo 'Running campaign and wave-engine invariants...'
 psql "${psql_args[@]}" -f "$repo_root/supabase/tests/campaign.test.sql"
 
+echo 'Running inbound and delivery-status invariants...'
+psql "${psql_args[@]}" -f "$repo_root/supabase/tests/inbound.test.sql"
+
 echo 'Running real two-connection claim race...'
 DATABASE_URL="$DATABASE_URL" \
   "$repo_root/supabase/tests/concurrent-claim.test.sh"
