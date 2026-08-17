@@ -1276,5 +1276,1315 @@
     "meta": {
       "templateCredsSetupCompleted": false
     }
+  },
+  {
+    "id": "ghostbuster-inbound-router",
+    "name": "Ghost-Buster \u2014 Inbound Router",
+    "active": false,
+    "nodes": [
+      {
+        "id": "twilio-inbound-webhook",
+        "name": "Twilio Inbound Webhook",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2,
+        "position": [
+          0,
+          0
+        ],
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "twilio-inbound",
+          "responseMode": "responseNode",
+          "options": {
+            "rawBody": true
+          }
+        }
+      },
+      {
+        "id": "verify-twilio-signature",
+        "name": "Verify Twilio Signature",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          220,
+          0
+        ],
+        "parameters": {
+          "jsCode": "const crypto = require('crypto');\nconst headers = $json.headers || {};\nconst supplied = String(headers['x-twilio-signature'] || headers['X-Twilio-Signature'] || '');\nconst body = $json.body || {};\nconst url = $vars.TWILIO_INBOUND_WEBHOOK_URL;\nconst payload = Object.keys(body).sort().reduce((value, key) => `${value}${key}${body[key]}`, url);\nconst expected = crypto.createHmac('sha1', $env.TWILIO_AUTH_TOKEN).update(payload).digest('base64');\nconst valid = supplied.length === expected.length && crypto.timingSafeEqual(Buffer.from(supplied), Buffer.from(expected));\nreturn [{ json: { valid, messageSid: body.MessageSid || body.SmsSid, from: body.From, body: body.Body || '' } }];"
+        }
+      },
+      {
+        "id": "twilio-signature-valid",
+        "name": "Twilio Signature Valid?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2,
+        "position": [
+          440,
+          0
+        ],
+        "parameters": {
+          "conditions": {
+            "boolean": [
+              {
+                "value1": "={{$json.valid}}",
+                "value2": true
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "reject-forged-inbound",
+        "name": "Reject Forged Inbound",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1,
+        "position": [
+          660,
+          180
+        ],
+        "parameters": {
+          "respondWith": "text",
+          "responseBody": "Forbidden",
+          "options": {
+            "responseCode": 403
+          }
+        }
+      },
+      {
+        "id": "insert-inbound-idempotency-log",
+        "name": "Insert Inbound Idempotency Log",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.6,
+        "position": [
+          660,
+          -80
+        ],
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "select public.ingest_inbound_sms($1,$2) as inserted;",
+          "options": {
+            "queryReplacement": "={{[$json.messageSid,$json.body]}}"
+          }
+        },
+        "credentials": {
+          "postgres": {
+            "id": "GHOSTBUSTER_POSTGRES_CREDENTIAL_ID",
+            "name": "Ghost-Buster Postgres"
+          }
+        }
+      },
+      {
+        "id": "first-delivery-of-message",
+        "name": "First Delivery of Message?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2,
+        "position": [
+          880,
+          -80
+        ],
+        "parameters": {
+          "conditions": {
+            "boolean": [
+              {
+                "value1": "={{$json.inserted}}",
+                "value2": true
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "acknowledge-webhook-replay",
+        "name": "Acknowledge Webhook Replay",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1,
+        "position": [
+          1100,
+          120
+        ],
+        "parameters": {
+          "respondWith": "text",
+          "responseBody": "",
+          "options": {
+            "responseCode": 200
+          }
+        }
+      },
+      {
+        "id": "normalize-phone-and-classify-keyword",
+        "name": "Normalize Phone and Classify Keyword",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1100,
+          -120
+        ],
+        "parameters": {
+          "jsCode": "const text = String($json.body || '').trim();\nconst keyword = text.toUpperCase().replace(/[.!?,;:]+$/g, '').trim();\nconst sets = {\n  OPT_OUT: ['STOP','STOPALL','UNSUBSCRIBE','CANCEL','END','QUIT'],\n  OPT_IN: ['START','UNSTOP'],\n  HELP: ['HELP','INFO'],\n  AFFIRMATIVE: ['YES','Y','YEP','YEAH','CLAIM','1'],\n};\nlet classification = 'OTHER';\nfor (const [name, values] of Object.entries(sets)) if (values.includes(keyword)) classification = name;\nconst phone = String($json.from || '').trim();\nreturn [{ json: { ...$json, phone, phoneValid: /^\\+[1-9]\\d{7,14}$/.test(phone), classification, normalizedBody: keyword } }];"
+        }
+      },
+      {
+        "id": "resolve-patient",
+        "name": "Resolve Patient",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.6,
+        "position": [
+          1320,
+          -120
+        ],
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "select id, full_name from public.patients where phone_number = $1 limit 1;",
+          "options": {
+            "queryReplacement": "={{[$json.phone]}}"
+          }
+        },
+        "credentials": {
+          "postgres": {
+            "id": "GHOSTBUSTER_POSTGRES_CREDENTIAL_ID",
+            "name": "Ghost-Buster Postgres"
+          }
+        },
+        "alwaysOutputData": true
+      },
+      {
+        "id": "known-patient",
+        "name": "Known Patient?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2,
+        "position": [
+          1540,
+          -120
+        ],
+        "parameters": {
+          "conditions": {
+            "boolean": [
+              {
+                "value1": "={{Boolean($json.id)}}",
+                "value2": true
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "store-unknown-message-in-inbox",
+        "name": "Store Unknown Message in Inbox",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.6,
+        "position": [
+          1760,
+          180
+        ],
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "select public.create_unhandled_inbox_message($1,null,null,$2);",
+          "options": {
+            "queryReplacement": "={{[$('Normalize Phone and Classify Keyword').first().json.messageSid,$('Normalize Phone and Classify Keyword').first().json.body]}}"
+          }
+        },
+        "credentials": {
+          "postgres": {
+            "id": "GHOSTBUSTER_POSTGRES_CREDENTIAL_ID",
+            "name": "Ghost-Buster Postgres"
+          }
+        }
+      },
+      {
+        "id": "acknowledge-unknown-sender",
+        "name": "Acknowledge Unknown Sender",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1,
+        "position": [
+          1980,
+          180
+        ],
+        "parameters": {
+          "respondWith": "text",
+          "responseBody": "",
+          "options": {
+            "responseCode": 200
+          }
+        }
+      },
+      {
+        "id": "attach-patient-to-inbound-log",
+        "name": "Attach Patient to Inbound Log",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.6,
+        "position": [
+          1760,
+          -160
+        ],
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "select public.link_inbound_sms_patient($1,$2::uuid);",
+          "options": {
+            "queryReplacement": "={{[$('Normalize Phone and Classify Keyword').first().json.messageSid,$json.id]}}"
+          }
+        },
+        "credentials": {
+          "postgres": {
+            "id": "GHOSTBUSTER_POSTGRES_CREDENTIAL_ID",
+            "name": "Ghost-Buster Postgres"
+          }
+        }
+      },
+      {
+        "id": "is-opt-out",
+        "name": "Is Opt Out?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2,
+        "position": [
+          1980,
+          -160
+        ],
+        "parameters": {
+          "conditions": {
+            "boolean": [
+              {
+                "value1": "={{$('Normalize Phone and Classify Keyword').first().json.classification === 'OPT_OUT'}}",
+                "value2": true
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "apply-opt-out-immediately",
+        "name": "Apply Opt Out Immediately",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.6,
+        "position": [
+          2200,
+          -300
+        ],
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "select public.process_patient_opt_out($1::uuid,$2);",
+          "options": {
+            "queryReplacement": "={{[$('Resolve Patient').first().json.id,$('Normalize Phone and Classify Keyword').first().json.messageSid]}}"
+          }
+        },
+        "credentials": {
+          "postgres": {
+            "id": "GHOSTBUSTER_POSTGRES_CREDENTIAL_ID",
+            "name": "Ghost-Buster Postgres"
+          }
+        }
+      },
+      {
+        "id": "acknowledge-carrier-managed-stop",
+        "name": "Acknowledge Carrier-managed Stop",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1,
+        "position": [
+          2420,
+          -300
+        ],
+        "parameters": {
+          "respondWith": "text",
+          "responseBody": "",
+          "options": {
+            "responseCode": 200
+          }
+        }
+      },
+      {
+        "id": "is-opt-in",
+        "name": "Is Opt In?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2,
+        "position": [
+          2200,
+          -120
+        ],
+        "parameters": {
+          "conditions": {
+            "boolean": [
+              {
+                "value1": "={{$('Normalize Phone and Classify Keyword').first().json.classification === 'OPT_IN'}}",
+                "value2": true
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "apply-conditional-opt-in",
+        "name": "Apply Conditional Opt In",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.6,
+        "position": [
+          2420,
+          -220
+        ],
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "select public.process_patient_opt_in($1::uuid,$2) as opted_in;",
+          "options": {
+            "queryReplacement": "={{[$('Resolve Patient').first().json.id,$('Normalize Phone and Classify Keyword').first().json.messageSid]}}"
+          }
+        },
+        "credentials": {
+          "postgres": {
+            "id": "GHOSTBUSTER_POSTGRES_CREDENTIAL_ID",
+            "name": "Ghost-Buster Postgres"
+          }
+        }
+      },
+      {
+        "id": "compose-opt-in-reply",
+        "name": "Compose Opt In Reply",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          2640,
+          -220
+        ],
+        "parameters": {
+          "jsCode": "const patient=$('Resolve Patient').first().json; const inbound=$('Normalize Phone and Classify Keyword').first().json; return [{json:{patientId:patient.id,campaignId:null,to:inbound.phone,messageBody:$json.opted_in?'Text messages are enabled. Reply STOP to opt out.':'Preferences cannot change while an active offer is open.'}}];"
+        }
+      },
+      {
+        "id": "is-help",
+        "name": "Is Help?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2,
+        "position": [
+          2420,
+          -60
+        ],
+        "parameters": {
+          "conditions": {
+            "boolean": [
+              {
+                "value1": "={{$('Normalize Phone and Classify Keyword').first().json.classification === 'HELP'}}",
+                "value2": true
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "compose-help-reply",
+        "name": "Compose Help Reply",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          2640,
+          -60
+        ],
+        "parameters": {
+          "jsCode": "const patient = $('Resolve Patient').first().json;\nconst inbound = $('Normalize Phone and Classify Keyword').first().json;\nreturn [{ json: { patientId: patient.id, campaignId: null, to: inbound.phone, messageBody: \"Reply YES to claim an active opening. Reply STOP to opt out. Call the clinic for other help.\" } }];"
+        }
+      },
+      {
+        "id": "is-affirmative",
+        "name": "Is Affirmative?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2,
+        "position": [
+          2640,
+          40
+        ],
+        "parameters": {
+          "conditions": {
+            "boolean": [
+              {
+                "value1": "={{$('Normalize Phone and Classify Keyword').first().json.classification === 'AFFIRMATIVE'}}",
+                "value2": true
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "find-most-recent-active-campaign",
+        "name": "Find Most Recent Active Campaign",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.6,
+        "position": [
+          2860,
+          -20
+        ],
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "select public.find_patient_active_campaign($1::uuid) as campaign_id;",
+          "options": {
+            "queryReplacement": "={{[$('Resolve Patient').first().json.id]}}"
+          }
+        },
+        "credentials": {
+          "postgres": {
+            "id": "GHOSTBUSTER_POSTGRES_CREDENTIAL_ID",
+            "name": "Ghost-Buster Postgres"
+          }
+        }
+      },
+      {
+        "id": "active-offer-found",
+        "name": "Active Offer Found?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2,
+        "position": [
+          3080,
+          -20
+        ],
+        "parameters": {
+          "conditions": {
+            "boolean": [
+              {
+                "value1": "={{Boolean($json.campaign_id)}}",
+                "value2": true
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "compose-no-active-offer-reply",
+        "name": "Compose No Active Offer Reply",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          3300,
+          120
+        ],
+        "parameters": {
+          "jsCode": "const patient=$('Resolve Patient').first().json; const inbound=$('Normalize Phone and Classify Keyword').first().json; return [{json:{patientId:patient.id,campaignId:null,to:inbound.phone,messageBody:'There is no active opening for this number. Call the clinic if you need help.'}}];"
+        }
+      },
+      {
+        "id": "atomic-claim",
+        "name": "Atomic Claim",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.6,
+        "position": [
+          3300,
+          -100
+        ],
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "select * from public.claim_slot($1::uuid,$2::uuid,$3);",
+          "options": {
+            "queryReplacement": "={{[$json.campaign_id,$('Resolve Patient').first().json.id,$('Normalize Phone and Classify Keyword').first().json.messageSid]}}"
+          }
+        },
+        "credentials": {
+          "postgres": {
+            "id": "GHOSTBUSTER_POSTGRES_CREDENTIAL_ID",
+            "name": "Ghost-Buster Postgres"
+          }
+        }
+      },
+      {
+        "id": "claim-won",
+        "name": "Claim Won?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2,
+        "position": [
+          3520,
+          -100
+        ],
+        "parameters": {
+          "conditions": {
+            "boolean": [
+              {
+                "value1": "={{$json.claimed}}",
+                "value2": true
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "compose-winner-confirmation",
+        "name": "Compose Winner Confirmation",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          3740,
+          -180
+        ],
+        "parameters": {
+          "jsCode": "const patient=$('Resolve Patient').first().json; const inbound=$('Normalize Phone and Classify Keyword').first().json; const when=new Intl.DateTimeFormat('en-US',{dateStyle:'medium',timeStyle:'short'}).format(new Date($json.appointment_time)); return [{json:{patientId:patient.id,campaignId:$json.campaign_id,to:inbound.phone,messageBody:`Your appointment is confirmed for ${when}. Call the clinic if you need to change it.`}}];"
+        }
+      },
+      {
+        "id": "compose-already-filled-reply",
+        "name": "Compose Already Filled Reply",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          3740,
+          -20
+        ],
+        "parameters": {
+          "jsCode": "const patient=$('Resolve Patient').first().json; const inbound=$('Normalize Phone and Classify Keyword').first().json; return [{json:{patientId:patient.id,campaignId:$json.campaign_id,to:inbound.phone,messageBody:'That opening has already been filled. We will contact you about future openings.'}}];"
+        }
+      },
+      {
+        "id": "store-unhandled-message",
+        "name": "Store Unhandled Message",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.6,
+        "position": [
+          2860,
+          180
+        ],
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "select public.create_unhandled_inbox_message($1,$2::uuid,null,$3);",
+          "options": {
+            "queryReplacement": "={{[$('Normalize Phone and Classify Keyword').first().json.messageSid,$('Resolve Patient').first().json.id,$('Normalize Phone and Classify Keyword').first().json.body]}}"
+          }
+        },
+        "credentials": {
+          "postgres": {
+            "id": "GHOSTBUSTER_POSTGRES_CREDENTIAL_ID",
+            "name": "Ghost-Buster Postgres"
+          }
+        }
+      },
+      {
+        "id": "acknowledge-unhandled-message",
+        "name": "Acknowledge Unhandled Message",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1,
+        "position": [
+          3080,
+          220
+        ],
+        "parameters": {
+          "respondWith": "text",
+          "responseBody": "",
+          "options": {
+            "responseCode": 200
+          }
+        }
+      },
+      {
+        "id": "send-transactional-twilio-reply",
+        "name": "Send Transactional Twilio Reply",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          3960,
+          -100
+        ],
+        "parameters": {
+          "method": "POST",
+          "url": "=https://api.twilio.com/2010-04-01/Accounts/{{$vars.TWILIO_ACCOUNT_SID}}/Messages.json",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpBasicAuth",
+          "sendBody": true,
+          "contentType": "form-urlencoded",
+          "bodyParameters": {
+            "parameters": [
+              {
+                "name": "To",
+                "value": "={{$json.to}}"
+              },
+              {
+                "name": "MessagingServiceSid",
+                "value": "={{$vars.TWILIO_MESSAGING_SERVICE_SID}}"
+              },
+              {
+                "name": "Body",
+                "value": "={{$json.messageBody}}"
+              }
+            ]
+          },
+          "options": {
+            "timeout": 10000
+          }
+        },
+        "credentials": {
+          "httpBasicAuth": {
+            "id": "TWILIO_HTTP_BASIC_CREDENTIAL_ID",
+            "name": "Twilio API"
+          }
+        }
+      },
+      {
+        "id": "record-transactional-reply",
+        "name": "Record Transactional Reply",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.6,
+        "position": [
+          4180,
+          -100
+        ],
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "select public.record_transactional_sms($1,$2::uuid,$3::uuid,$4,'QUEUED'::public.sms_status,$5);",
+          "options": {
+            "queryReplacement": "={{[$json.sid,$('Resolve Patient').first().json.id,$('Compose Opt In Reply').isExecuted ? $('Compose Opt In Reply').first().json.campaignId : $('Compose Help Reply').isExecuted ? $('Compose Help Reply').first().json.campaignId : $('Compose No Active Offer Reply').isExecuted ? $('Compose No Active Offer Reply').first().json.campaignId : $('Compose Winner Confirmation').isExecuted ? $('Compose Winner Confirmation').first().json.campaignId : $('Compose Already Filled Reply').isExecuted ? $('Compose Already Filled Reply').first().json.campaignId : null,$('Compose Opt In Reply').isExecuted ? $('Compose Opt In Reply').first().json.messageBody : $('Compose Help Reply').isExecuted ? $('Compose Help Reply').first().json.messageBody : $('Compose No Active Offer Reply').isExecuted ? $('Compose No Active Offer Reply').first().json.messageBody : $('Compose Winner Confirmation').isExecuted ? $('Compose Winner Confirmation').first().json.messageBody : $('Compose Already Filled Reply').isExecuted ? $('Compose Already Filled Reply').first().json.messageBody : '',$json.error_code || null]}}"
+          }
+        },
+        "credentials": {
+          "postgres": {
+            "id": "GHOSTBUSTER_POSTGRES_CREDENTIAL_ID",
+            "name": "Ghost-Buster Postgres"
+          }
+        }
+      },
+      {
+        "id": "acknowledge-processed-inbound",
+        "name": "Acknowledge Processed Inbound",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1,
+        "position": [
+          4400,
+          -100
+        ],
+        "parameters": {
+          "respondWith": "text",
+          "responseBody": "",
+          "options": {
+            "responseCode": 200
+          }
+        }
+      }
+    ],
+    "connections": {
+      "Twilio Inbound Webhook": {
+        "main": [
+          [
+            {
+              "node": "Verify Twilio Signature",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Verify Twilio Signature": {
+        "main": [
+          [
+            {
+              "node": "Twilio Signature Valid?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Twilio Signature Valid?": {
+        "main": [
+          [
+            {
+              "node": "Insert Inbound Idempotency Log",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Reject Forged Inbound",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Insert Inbound Idempotency Log": {
+        "main": [
+          [
+            {
+              "node": "First Delivery of Message?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "First Delivery of Message?": {
+        "main": [
+          [
+            {
+              "node": "Normalize Phone and Classify Keyword",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Acknowledge Webhook Replay",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Normalize Phone and Classify Keyword": {
+        "main": [
+          [
+            {
+              "node": "Resolve Patient",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Resolve Patient": {
+        "main": [
+          [
+            {
+              "node": "Known Patient?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Known Patient?": {
+        "main": [
+          [
+            {
+              "node": "Attach Patient to Inbound Log",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Store Unknown Message in Inbox",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Store Unknown Message in Inbox": {
+        "main": [
+          [
+            {
+              "node": "Acknowledge Unknown Sender",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Attach Patient to Inbound Log": {
+        "main": [
+          [
+            {
+              "node": "Is Opt Out?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Is Opt Out?": {
+        "main": [
+          [
+            {
+              "node": "Apply Opt Out Immediately",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Is Opt In?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Apply Opt Out Immediately": {
+        "main": [
+          [
+            {
+              "node": "Acknowledge Carrier-managed Stop",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Is Opt In?": {
+        "main": [
+          [
+            {
+              "node": "Apply Conditional Opt In",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Is Help?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Apply Conditional Opt In": {
+        "main": [
+          [
+            {
+              "node": "Compose Opt In Reply",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Is Help?": {
+        "main": [
+          [
+            {
+              "node": "Compose Help Reply",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Is Affirmative?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Is Affirmative?": {
+        "main": [
+          [
+            {
+              "node": "Find Most Recent Active Campaign",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Store Unhandled Message",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Store Unhandled Message": {
+        "main": [
+          [
+            {
+              "node": "Acknowledge Unhandled Message",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Find Most Recent Active Campaign": {
+        "main": [
+          [
+            {
+              "node": "Active Offer Found?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Active Offer Found?": {
+        "main": [
+          [
+            {
+              "node": "Atomic Claim",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Compose No Active Offer Reply",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Atomic Claim": {
+        "main": [
+          [
+            {
+              "node": "Claim Won?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Claim Won?": {
+        "main": [
+          [
+            {
+              "node": "Compose Winner Confirmation",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Compose Already Filled Reply",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Compose Opt In Reply": {
+        "main": [
+          [
+            {
+              "node": "Send Transactional Twilio Reply",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Compose Help Reply": {
+        "main": [
+          [
+            {
+              "node": "Send Transactional Twilio Reply",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Compose No Active Offer Reply": {
+        "main": [
+          [
+            {
+              "node": "Send Transactional Twilio Reply",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Compose Winner Confirmation": {
+        "main": [
+          [
+            {
+              "node": "Send Transactional Twilio Reply",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Compose Already Filled Reply": {
+        "main": [
+          [
+            {
+              "node": "Send Transactional Twilio Reply",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Send Transactional Twilio Reply": {
+        "main": [
+          [
+            {
+              "node": "Record Transactional Reply",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Record Transactional Reply": {
+        "main": [
+          [
+            {
+              "node": "Acknowledge Processed Inbound",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "settings": {
+      "executionOrder": "v1",
+      "errorWorkflow": "ghostbuster-error-handler"
+    },
+    "pinData": {},
+    "versionId": "00000000-0000-4000-8000-000000000061",
+    "meta": {
+      "templateCredsSetupCompleted": false
+    }
+  },
+  {
+    "id": "ghostbuster-status-reconciler",
+    "name": "Ghost-Buster \u2014 Status Reconciler",
+    "active": false,
+    "nodes": [
+      {
+        "id": "twilio-status-webhook",
+        "name": "Twilio Status Webhook",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2,
+        "position": [
+          0,
+          0
+        ],
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "twilio-status",
+          "responseMode": "responseNode",
+          "options": {
+            "rawBody": true
+          }
+        }
+      },
+      {
+        "id": "verify-twilio-status-signature",
+        "name": "Verify Twilio Status Signature",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          220,
+          0
+        ],
+        "parameters": {
+          "jsCode": "const crypto = require('crypto');\nconst headers = $json.headers || {};\nconst supplied = String(headers['x-twilio-signature'] || headers['X-Twilio-Signature'] || '');\nconst body = $json.body || {};\nconst url = $vars.TWILIO_STATUS_WEBHOOK_URL;\nconst payload = Object.keys(body).sort().reduce((value, key) => `${value}${key}${body[key]}`, url);\nconst expected = crypto.createHmac('sha1', $env.TWILIO_AUTH_TOKEN).update(payload).digest('base64');\nconst valid = supplied.length === expected.length && crypto.timingSafeEqual(Buffer.from(supplied), Buffer.from(expected));\nreturn [{ json: { valid, messageSid: body.MessageSid || body.SmsSid, messageStatus: body.MessageStatus || body.SmsStatus, errorCode: body.ErrorCode || null, segments: body.NumSegments || null, price: body.Price || null } }];"
+        }
+      },
+      {
+        "id": "status-signature-valid",
+        "name": "Status Signature Valid?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2,
+        "position": [
+          440,
+          0
+        ],
+        "parameters": {
+          "conditions": {
+            "boolean": [
+              {
+                "value1": "={{$json.valid}}",
+                "value2": true
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "reject-forged-status",
+        "name": "Reject Forged Status",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1,
+        "position": [
+          660,
+          160
+        ],
+        "parameters": {
+          "respondWith": "text",
+          "responseBody": "Forbidden",
+          "options": {
+            "responseCode": 403
+          }
+        }
+      },
+      {
+        "id": "normalize-twilio-delivery-status",
+        "name": "Normalize Twilio Delivery Status",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          660,
+          -80
+        ],
+        "parameters": {
+          "jsCode": "const map={queued:'QUEUED',sent:'SENT',delivered:'DELIVERED',undelivered:'UNDELIVERED',failed:'FAILED'};\nconst status=map[String($json.messageStatus||'').toLowerCase()]||null;\nreturn [{json:{...$json,status,statusValid:Boolean(status)}}];"
+        }
+      },
+      {
+        "id": "known-delivery-status",
+        "name": "Known Delivery Status?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2,
+        "position": [
+          880,
+          -80
+        ],
+        "parameters": {
+          "conditions": {
+            "boolean": [
+              {
+                "value1": "={{$json.statusValid}}",
+                "value2": true
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "advance-sms-status-without-regression",
+        "name": "Advance SMS Status Without Regression",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.6,
+        "position": [
+          1100,
+          -120
+        ],
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "select public.reconcile_sms_status($1,$2::public.sms_status,$3,$4::int,$5::numeric) as status;",
+          "options": {
+            "queryReplacement": "={{[$json.messageSid,$json.status,$json.errorCode,$json.segments,$json.price]}}"
+          }
+        },
+        "credentials": {
+          "postgres": {
+            "id": "GHOSTBUSTER_POSTGRES_CREDENTIAL_ID",
+            "name": "Ghost-Buster Postgres"
+          }
+        }
+      },
+      {
+        "id": "acknowledge-status-callback",
+        "name": "Acknowledge Status Callback",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1,
+        "position": [
+          1320,
+          -120
+        ],
+        "parameters": {
+          "respondWith": "text",
+          "responseBody": "",
+          "options": {
+            "responseCode": 200
+          }
+        }
+      },
+      {
+        "id": "ignore-unknown-status",
+        "name": "Ignore Unknown Status",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1,
+        "position": [
+          1100,
+          60
+        ],
+        "parameters": {
+          "respondWith": "text",
+          "responseBody": "",
+          "options": {
+            "responseCode": 200
+          }
+        }
+      }
+    ],
+    "connections": {
+      "Twilio Status Webhook": {
+        "main": [
+          [
+            {
+              "node": "Verify Twilio Status Signature",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Verify Twilio Status Signature": {
+        "main": [
+          [
+            {
+              "node": "Status Signature Valid?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Status Signature Valid?": {
+        "main": [
+          [
+            {
+              "node": "Normalize Twilio Delivery Status",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Reject Forged Status",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Normalize Twilio Delivery Status": {
+        "main": [
+          [
+            {
+              "node": "Known Delivery Status?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Known Delivery Status?": {
+        "main": [
+          [
+            {
+              "node": "Advance SMS Status Without Regression",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Ignore Unknown Status",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Advance SMS Status Without Regression": {
+        "main": [
+          [
+            {
+              "node": "Acknowledge Status Callback",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "settings": {
+      "executionOrder": "v1",
+      "errorWorkflow": "ghostbuster-error-handler"
+    },
+    "pinData": {},
+    "versionId": "00000000-0000-4000-8000-000000000062",
+    "meta": {
+      "templateCredsSetupCompleted": false
+    }
   }
 ]

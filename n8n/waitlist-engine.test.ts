@@ -33,6 +33,8 @@ describe("n8n waitlist engine export", () => {
       "Ghost-Buster — Campaign Start",
       "Ghost-Buster — Wave Engine",
       "Ghost-Buster — Error Handler",
+      "Ghost-Buster — Inbound Router",
+      "Ghost-Buster — Status Reconciler",
     ])
   })
 
@@ -81,6 +83,38 @@ describe("n8n waitlist engine export", () => {
     )
   })
 
+  it("verifies Twilio signatures before inbound or status database writes", () => {
+    const inbound = workflow("Ghost-Buster — Inbound Router")
+    const inboundNames = nodeNames(inbound)
+    expect(inboundNames.indexOf("Verify Twilio Signature")).toBeLessThan(
+      inboundNames.indexOf("Insert Inbound Idempotency Log"),
+    )
+    const verifier = inbound.nodes.find((node) => node.name === "Verify Twilio Signature")
+    expect(String(verifier?.parameters.jsCode)).toContain("createHmac('sha1'")
+    expect(String(verifier?.parameters.jsCode)).toContain("timingSafeEqual")
+
+    const statusNames = nodeNames(workflow("Ghost-Buster — Status Reconciler"))
+    expect(statusNames.indexOf("Verify Twilio Status Signature")).toBeLessThan(
+      statusNames.indexOf("Advance SMS Status Without Regression"),
+    )
+  })
+
+  it("deduplicates inbound messages before normalization, lookup, or claiming", () => {
+    const names = nodeNames(workflow("Ghost-Buster — Inbound Router"))
+    expect(names.indexOf("Insert Inbound Idempotency Log")).toBeLessThan(
+      names.indexOf("Normalize Phone and Classify Keyword"),
+    )
+    expect(names).toEqual(
+      expect.arrayContaining([
+        "Resolve Patient",
+        "Apply Opt Out Immediately",
+        "Find Most Recent Active Campaign",
+        "Atomic Claim",
+        "Store Unhandled Message",
+      ]),
+    )
+  })
+
   it("references only placeholder credential IDs and contains no plaintext key", () => {
     expect(raw).not.toMatch(/github_pat_|authToken|service_role_key|sk_live_/i)
     const credentialIds = workflows.flatMap((item) =>
@@ -94,8 +128,10 @@ describe("n8n waitlist engine export", () => {
         "TWILIO_HTTP_BASIC_CREDENTIAL_ID",
       ]),
     )
-    expect(workflows.slice(0, 2).every((item) => item.settings.errorWorkflow)).toBe(
-      true,
-    )
+    expect(
+      workflows
+        .filter((item) => item.name !== "Ghost-Buster — Error Handler")
+        .every((item) => item.settings.errorWorkflow),
+    ).toBe(true)
   })
 })
