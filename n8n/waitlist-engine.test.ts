@@ -35,6 +35,7 @@ describe("n8n waitlist engine export", () => {
       "Ghost-Buster — Error Handler",
       "Ghost-Buster — Inbound Router",
       "Ghost-Buster — Status Reconciler",
+      "Ghost-Buster — Manual Reply",
     ])
   })
 
@@ -112,6 +113,19 @@ describe("n8n waitlist engine export", () => {
         "Atomic Claim",
         "Store Unhandled Message",
       ]),
+    )
+  })
+
+  it("authenticates and reserves manual replies before Twilio sending", () => {
+    const names = nodeNames(workflow("Ghost-Buster — Manual Reply"))
+    expect(names.indexOf("Verify Manual Reply Signature")).toBeLessThan(
+      names.indexOf("Reserve Manual Reply and Check Preconditions"),
+    )
+    expect(names.indexOf("Reserve Manual Reply and Check Preconditions")).toBeLessThan(
+      names.indexOf("Send Manual Reply via Twilio"),
+    )
+    expect(names.indexOf("Send Manual Reply via Twilio")).toBeLessThan(
+      names.indexOf("Record Manual Reply and Audit"),
     )
   })
 

@@ -2586,5 +2586,325 @@
     "meta": {
       "templateCredsSetupCompleted": false
     }
+  },
+  {
+    "id": "ghostbuster-manual-reply",
+    "name": "Ghost-Buster \u2014 Manual Reply",
+    "active": false,
+    "nodes": [
+      {
+        "id": "manual-reply-webhook",
+        "name": "Manual Reply Webhook",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2,
+        "position": [
+          0,
+          0
+        ],
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "manual-reply",
+          "responseMode": "responseNode",
+          "options": {
+            "rawBody": true
+          }
+        }
+      },
+      {
+        "id": "verify-manual-reply-signature",
+        "name": "Verify Manual Reply Signature",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          220,
+          0
+        ],
+        "parameters": {
+          "jsCode": "const crypto = require('crypto');\nconst headers = $json.headers || {};\nconst timestamp = String(headers['x-ghostbuster-timestamp'] || headers['X-Ghostbuster-Timestamp'] || '');\nconst supplied = String(headers['x-ghostbuster-signature'] || headers['X-Ghostbuster-Signature'] || '');\nconst rawBody = String($json.rawBody || JSON.stringify($json.body || {}));\nconst seconds = Number(timestamp);\nconst fresh = Number.isFinite(seconds) && Math.abs(Math.floor(Date.now()/1000)-seconds) <= 300;\nconst expected = crypto.createHmac('sha256',$env.GHOSTBUSTER_SHARED_SECRET).update(`${timestamp}.${rawBody}`).digest('hex');\nconst valid = fresh && supplied.length === expected.length && crypto.timingSafeEqual(Buffer.from(supplied),Buffer.from(expected));\nreturn [{json:{valid,...($json.body||{})}}];"
+        }
+      },
+      {
+        "id": "manual-signature-valid",
+        "name": "Manual Signature Valid?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2,
+        "position": [
+          440,
+          0
+        ],
+        "parameters": {
+          "conditions": {
+            "boolean": [
+              {
+                "value1": "={{$json.valid}}",
+                "value2": true
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "reject-forged-manual-reply",
+        "name": "Reject Forged Manual Reply",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1,
+        "position": [
+          660,
+          160
+        ],
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={\"accepted\":false,\"error\":\"unauthorized\"}",
+          "options": {
+            "responseCode": 401
+          }
+        }
+      },
+      {
+        "id": "reserve-manual-reply-and-check-preconditions",
+        "name": "Reserve Manual Reply and Check Preconditions",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.6,
+        "position": [
+          660,
+          -80
+        ],
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "select * from public.reserve_manual_reply($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5);",
+          "options": {
+            "queryReplacement": "={{[$json.requestId,$json.inboxId,$json.patientId,$json.staffId,$json.message]}}"
+          }
+        },
+        "credentials": {
+          "postgres": {
+            "id": "GHOSTBUSTER_POSTGRES_CREDENTIAL_ID",
+            "name": "Ghost-Buster Postgres"
+          }
+        }
+      },
+      {
+        "id": "manual-reply-allowed",
+        "name": "Manual Reply Allowed?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2,
+        "position": [
+          880,
+          -80
+        ],
+        "parameters": {
+          "conditions": {
+            "boolean": [
+              {
+                "value1": "={{$json.should_send}}",
+                "value2": true
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "reply-blocked-response",
+        "name": "Reply Blocked Response",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1,
+        "position": [
+          1100,
+          100
+        ],
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={\"accepted\":false,\"reason\":\"{{$json.blocked_reason || $json.request_status}}\"}",
+          "options": {
+            "responseCode": 422
+          }
+        }
+      },
+      {
+        "id": "send-manual-reply-via-twilio",
+        "name": "Send Manual Reply via Twilio",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1100,
+          -140
+        ],
+        "parameters": {
+          "method": "POST",
+          "url": "=https://api.twilio.com/2010-04-01/Accounts/{{$vars.TWILIO_ACCOUNT_SID}}/Messages.json",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpBasicAuth",
+          "sendBody": true,
+          "contentType": "form-urlencoded",
+          "bodyParameters": {
+            "parameters": [
+              {
+                "name": "To",
+                "value": "={{$json.phone_number}}"
+              },
+              {
+                "name": "MessagingServiceSid",
+                "value": "={{$vars.TWILIO_MESSAGING_SERVICE_SID}}"
+              },
+              {
+                "name": "Body",
+                "value": "={{$('Verify Manual Reply Signature').first().json.message}}"
+              }
+            ]
+          },
+          "options": {
+            "timeout": 10000
+          }
+        },
+        "credentials": {
+          "httpBasicAuth": {
+            "id": "TWILIO_HTTP_BASIC_CREDENTIAL_ID",
+            "name": "Twilio API"
+          }
+        }
+      },
+      {
+        "id": "record-manual-reply-and-audit",
+        "name": "Record Manual Reply and Audit",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.6,
+        "position": [
+          1320,
+          -140
+        ],
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "select public.complete_manual_reply($1::uuid,$2,'QUEUED'::public.sms_status,$3) as completed;",
+          "options": {
+            "queryReplacement": "={{[$('Verify Manual Reply Signature').first().json.requestId,$json.sid,$json.error_code || null]}}"
+          }
+        },
+        "credentials": {
+          "postgres": {
+            "id": "GHOSTBUSTER_POSTGRES_CREDENTIAL_ID",
+            "name": "Ghost-Buster Postgres"
+          }
+        }
+      },
+      {
+        "id": "manual-reply-accepted-response",
+        "name": "Manual Reply Accepted Response",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1,
+        "position": [
+          1540,
+          -140
+        ],
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={\"accepted\":true,\"executionId\":\"{{$execution.id}}\"}",
+          "options": {
+            "responseCode": 200
+          }
+        }
+      }
+    ],
+    "connections": {
+      "Manual Reply Webhook": {
+        "main": [
+          [
+            {
+              "node": "Verify Manual Reply Signature",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Verify Manual Reply Signature": {
+        "main": [
+          [
+            {
+              "node": "Manual Signature Valid?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Manual Signature Valid?": {
+        "main": [
+          [
+            {
+              "node": "Reserve Manual Reply and Check Preconditions",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Reject Forged Manual Reply",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Reserve Manual Reply and Check Preconditions": {
+        "main": [
+          [
+            {
+              "node": "Manual Reply Allowed?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Manual Reply Allowed?": {
+        "main": [
+          [
+            {
+              "node": "Send Manual Reply via Twilio",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Reply Blocked Response",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Send Manual Reply via Twilio": {
+        "main": [
+          [
+            {
+              "node": "Record Manual Reply and Audit",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Record Manual Reply and Audit": {
+        "main": [
+          [
+            {
+              "node": "Manual Reply Accepted Response",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "settings": {
+      "executionOrder": "v1",
+      "errorWorkflow": "ghostbuster-error-handler"
+    },
+    "pinData": {},
+    "versionId": "00000000-0000-4000-8000-000000000071",
+    "meta": {
+      "templateCredsSetupCompleted": false
+    }
   }
 ]

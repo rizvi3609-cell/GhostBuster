@@ -7,6 +7,7 @@
 3. `Ghost-Buster — Error Handler`
 4. `Ghost-Buster — Inbound Router`
 5. `Ghost-Buster — Status Reconciler`
+6. `Ghost-Buster — Manual Reply`
 
 All workflows import inactive. Configure and test them before activation.
 
@@ -34,9 +35,10 @@ Configure `GHOSTBUSTER_SHARED_SECRET` and `TWILIO_AUTH_TOKEN` through n8n Extern
 3. Attach and activate the Error Handler.
 4. Test unsigned and correctly signed campaign-start requests.
 5. Test forged and correctly signed Twilio inbound and status callbacks.
-6. Activate Status Reconciler and Inbound Router.
-7. Activate Wave Engine.
-8. Activate Campaign Start last.
+6. Test a manual reply with the kill switch, opt-out, consent, quiet-hours, and frequency-cap branches.
+7. Activate Status Reconciler, Inbound Router, and Manual Reply.
+8. Activate Wave Engine.
+9. Activate Campaign Start last.
 
 ## Safety behavior
 
@@ -51,4 +53,5 @@ Configure `GHOSTBUSTER_SHARED_SECRET` and `TWILIO_AUTH_TOKEN` through n8n Extern
 - Twilio handles the carrier-mandated STOP confirmation. The app immediately mirrors opt-out state and does not send an additional STOP reply.
 - HELP, opt-in, winner, loser, and no-offer replies are transactional, idempotently logged, and contain no clinical detail.
 - Delivery callbacks advance message state without regressing terminal statuses.
+- Manual replies reserve a unique request before Twilio, enforce all five outbound preconditions, and record both `sms_logs` and `MANUAL_REPLY_SENT` audit data after success.
 - Workflow logs must never be configured to retain full phone numbers or message bodies beyond n8n's minimum execution data required for recovery.
