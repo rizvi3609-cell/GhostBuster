@@ -5,7 +5,7 @@ import { z } from "zod"
 
 import { env } from "@/lib/env"
 
-const CampaignStartResponse = z.object({
+const AcceptedResponse = z.object({
   accepted: z.literal(true),
   executionId: z.string().optional(),
 })
@@ -13,6 +13,14 @@ const CampaignStartResponse = z.object({
 export type N8nCallResult =
   | { ok: true; executionId: string | null }
   | { ok: false; code: "N8N_UNAVAILABLE" | "INVALID_RESPONSE" }
+
+export type ManualReplyPayload = Readonly<{
+  inboxId: string
+  message: string
+  patientId: string
+  requestId: string
+  staffId: string
+}>
 
 export function signN8nPayload(
   rawBody: string,
@@ -24,14 +32,14 @@ export function signN8nPayload(
     .digest("hex")
 }
 
-export async function triggerCampaignStart(campaignId: string): Promise<N8nCallResult> {
-  const rawBody = JSON.stringify({ campaignId })
+async function signedPost(path: string, payload: unknown): Promise<N8nCallResult> {
+  const rawBody = JSON.stringify(payload)
   const timestamp = Math.floor(Date.now() / 1000).toString()
   const signature = signN8nPayload(rawBody, timestamp, env.N8N_SHARED_SECRET)
 
   let response: Response
   try {
-    response = await fetch(new URL("/webhook/campaign-start", env.N8N_BASE_URL), {
+    response = await fetch(new URL(path, env.N8N_BASE_URL), {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -55,11 +63,18 @@ export async function triggerCampaignStart(campaignId: string): Promise<N8nCallR
     return { ok: false, code: "INVALID_RESPONSE" }
   }
 
-  const parsed = CampaignStartResponse.safeParse(body)
+  const parsed = AcceptedResponse.safeParse(body)
   if (!parsed.success) return { ok: false, code: "INVALID_RESPONSE" }
 
-  return {
-    ok: true,
-    executionId: parsed.data.executionId ?? null,
-  }
+  return { ok: true, executionId: parsed.data.executionId ?? null }
+}
+
+export function triggerCampaignStart(campaignId: string): Promise<N8nCallResult> {
+  return signedPost("/webhook/campaign-start", { campaignId })
+}
+
+export function sendManualReplyToN8n(
+  payload: ManualReplyPayload,
+): Promise<N8nCallResult> {
+  return signedPost("/webhook/manual-reply", payload)
 }

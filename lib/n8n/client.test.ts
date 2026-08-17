@@ -9,7 +9,11 @@ vi.mock("@/lib/env", () => ({
   },
 }))
 
-import { signN8nPayload, triggerCampaignStart } from "./client"
+import {
+  sendManualReplyToN8n,
+  signN8nPayload,
+  triggerCampaignStart,
+} from "./client"
 
 describe("n8n campaign-start client", () => {
   beforeEach(() => vi.restoreAllMocks())
@@ -43,6 +47,25 @@ describe("n8n campaign-start client", () => {
       "X-Ghostbuster-Signature": expect.stringMatching(/^[a-f0-9]{64}$/),
     })
     expect(JSON.stringify(options)).not.toContain("test-shared-secret")
+  })
+
+  it("sends a signed manual-reply request without logging or exposing credentials", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ accepted: true, executionId: "manual-1" })),
+    )
+
+    await expect(
+      sendManualReplyToN8n({
+        inboxId: "00000000-0000-4000-8000-000000000001",
+        patientId: "00000000-0000-4000-8000-000000000002",
+        requestId: "00000000-0000-4000-8000-000000000003",
+        staffId: "00000000-0000-4000-8000-000000000004",
+        message: "Please call the front desk.",
+      }),
+    ).resolves.toEqual({ ok: true, executionId: "manual-1" })
+
+    expect(String(fetchMock.mock.calls[0][0])).toContain("/webhook/manual-reply")
+    expect(fetchMock.mock.calls[0][1]?.body).toContain("Please call the front desk.")
   })
 
   it("returns error values for network, HTTP, and malformed responses", async () => {

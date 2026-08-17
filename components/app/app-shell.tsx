@@ -3,6 +3,7 @@ import type { ReactNode } from "react"
 import { signOutAction } from "@/app/actions/auth"
 import { KillSwitchBanner } from "@/components/app/kill-switch-banner"
 import { NavLinks } from "@/components/app/nav-links"
+import { InboxRealtimeProvider } from "@/components/inbox/inbox-realtime-provider"
 import type { StaffRole } from "@/lib/auth"
 
 type AppShellProps = Readonly<{
@@ -48,7 +49,8 @@ export function AppShell({
   unreadCount,
 }: AppShellProps) {
   return (
-    <div className="min-h-screen bg-bg">
+    <InboxRealtimeProvider initialUnreadCount={unreadCount}>
+      <div className="min-h-screen bg-bg">
       <aside className="fixed inset-y-0 left-0 z-30 hidden w-20 flex-col border-r border-sidebar-border bg-sidebar px-3 py-4 md:flex lg:w-60 lg:px-4">
         <div className="flex items-center gap-3 px-1">
           <BrandMark />
@@ -59,7 +61,7 @@ export function AppShell({
         </div>
 
         <nav aria-label="Primary" className="mt-8">
-          <NavLinks unreadCount={unreadCount} placement="sidebar" />
+          <NavLinks placement="sidebar" />
         </nav>
 
         <div className="mt-auto hidden border-t border-sidebar-border pt-4 lg:block">
@@ -115,8 +117,9 @@ export function AppShell({
         aria-label="Mobile primary"
         className="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-surface md:hidden"
       >
-        <NavLinks unreadCount={unreadCount} placement="bottom" />
+        <NavLinks placement="bottom" />
       </nav>
-    </div>
+      </div>
+    </InboxRealtimeProvider>
   )
 }

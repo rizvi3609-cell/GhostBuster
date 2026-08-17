@@ -3,6 +3,8 @@
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 
+import { useInboxRealtime } from "@/components/inbox/inbox-realtime-provider"
+
 const navigation = [
   { href: "/dashboard", label: "Dashboard", icon: "dashboard" },
   { href: "/inbox", label: "Inbox", icon: "inbox" },
@@ -37,12 +39,12 @@ function NavIcon({ name }: Readonly<{ name: IconName }>) {
 }
 
 type NavLinksProps = Readonly<{
-  unreadCount: number
   placement: "sidebar" | "bottom"
 }>
 
-export function NavLinks({ unreadCount, placement }: NavLinksProps) {
+export function NavLinks({ placement }: NavLinksProps) {
   const pathname = usePathname()
+  const { unreadCount } = useInboxRealtime()
   const isBottom = placement === "bottom"
 
   return (
