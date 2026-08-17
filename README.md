@@ -6,7 +6,7 @@ Read `agent.md`, `docs/architecture.md`, and `docs/database.md` before making ch
 
 ## Current scope
 
-Phases 0–8 are complete: the scaffold, database and RLS foundation, atomic claims, staff authentication, patient import, campaign and inbound automation, live two-way inbox, operational dashboard, audited settings, staff/template management, and the global kill switch are in place. Optional V2 recalls, reviews, deposits, and reliability scoring remain behind Phase 9.
+Phases 0–9 are implemented: the V1 waitlist platform plus feature-flagged recalls, delayed review requests, Stripe deposit reservations, expiry wave resumption, and transparent reliability scoring are in place. Real-provider deployment, acceptance testing, backups, recovery documentation, and clinic handover remain.
 
 ## Local setup
 

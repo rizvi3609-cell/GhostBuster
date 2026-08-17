@@ -51,6 +51,15 @@ psql "${psql_args[@]}" -f "$repo_root/supabase/tests/inbox.test.sql"
 echo 'Running dashboard, settings, and kill-switch invariants...'
 psql "${psql_args[@]}" -f "$repo_root/supabase/tests/settings.test.sql"
 
+echo 'Running recall and review invariants...'
+psql "${psql_args[@]}" -f "$repo_root/supabase/tests/recalls_reviews.test.sql"
+
+echo 'Running Stripe deposit invariants...'
+psql "${psql_args[@]}" -f "$repo_root/supabase/tests/stripe.test.sql"
+
+echo 'Running reliability-score invariants...'
+psql "${psql_args[@]}" -f "$repo_root/supabase/tests/reliability.test.sql"
+
 echo 'Running real two-connection claim race...'
 DATABASE_URL="$DATABASE_URL" \
   "$repo_root/supabase/tests/concurrent-claim.test.sh"

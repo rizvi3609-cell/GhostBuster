@@ -75,6 +75,8 @@ begin
     'sms_logs',
     'unhandled_inbox',
     'manual_reply_requests',
+    'payment_reservations',
+    'stripe_events',
     'scheduled_messages',
     'import_batches',
     'import_batch_chunks',

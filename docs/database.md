@@ -466,6 +466,11 @@ The browser gets the **anon** key only, and only to subscribe to Realtime on the
 0018_inbox_and_manual_replies.sql
 0019_dashboard_functions.sql
 0020_settings_functions.sql
+0021_recalls_and_reviews.sql
+0022_stripe_deposits.sql
+0023_reliability_scoring.sql
+0024_v2_settings.sql
+0025_stripe_failure_release.sql
 ```
 
 Each file is forward-only and idempotent (`if not exists` / `create or replace`). Never edit a shipped migration; add a new one.
