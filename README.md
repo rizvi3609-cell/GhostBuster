@@ -6,7 +6,7 @@ Read `agent.md`, `docs/architecture.md`, and `docs/database.md` before making ch
 
 ## Current scope
 
-Phases 0–7 are complete: the scaffold, database and RLS foundation, atomic claims, staff authentication, patient import, campaign automation, signed Twilio inbound routing, non-regressing delivery reconciliation, and the live two-way staff inbox are in place. Dashboard metrics, settings controls, and optional V2 automation belong to later phases.
+Phases 0–8 are complete: the scaffold, database and RLS foundation, atomic claims, staff authentication, patient import, campaign and inbound automation, live two-way inbox, operational dashboard, audited settings, staff/template management, and the global kill switch are in place. Optional V2 recalls, reviews, deposits, and reliability scoring remain behind Phase 9.
 
 ## Local setup
 

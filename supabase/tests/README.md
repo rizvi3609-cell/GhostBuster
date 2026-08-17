@@ -27,5 +27,7 @@ The runner:
 6. Verifies DRAFT activation, recipient reservation before send, replay blocking, pause/cancel, manual fill, and the post-wait state recheck.
 7. Verifies inbound replay dedupe, immediate STOP enforcement, conditional opt-in, inbox idempotency, and non-regressing delivery status.
 8. Verifies conversation-level assign/resolve, replay-safe manual replies, five precondition ordering, one SMS log, and one audit event.
-9. Starts two independent `psql` connections against one campaign at the same timestamp and requires exactly one `claim_slot` winner.
-10. Loads 20,000 eligible patients and requires `EXPLAIN ANALYZE` to use the hot-path indexes.
+9. Verifies dashboard aggregates, settings audits, template/staff controls, kill-switch blocking, and automation-abort logging.
+10. Starts two independent `psql` connections against one campaign at the same timestamp and requires exactly one `claim_slot` winner.
+11. Loads 20,000 eligible patients and requires `EXPLAIN ANALYZE` to use the hot-path indexes.
+12. Loads 500 active campaigns and requires the dashboard index plus an aggregate execution time under 100 ms.

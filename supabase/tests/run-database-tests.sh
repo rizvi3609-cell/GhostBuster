@@ -48,6 +48,9 @@ psql "${psql_args[@]}" -f "$repo_root/supabase/tests/inbound.test.sql"
 echo 'Running inbox and manual-reply invariants...'
 psql "${psql_args[@]}" -f "$repo_root/supabase/tests/inbox.test.sql"
 
+echo 'Running dashboard, settings, and kill-switch invariants...'
+psql "${psql_args[@]}" -f "$repo_root/supabase/tests/settings.test.sql"
+
 echo 'Running real two-connection claim race...'
 DATABASE_URL="$DATABASE_URL" \
   "$repo_root/supabase/tests/concurrent-claim.test.sh"
@@ -55,5 +58,9 @@ DATABASE_URL="$DATABASE_URL" \
 echo 'Checking the 20k-patient wave-selection plan...'
 DATABASE_URL="$DATABASE_URL" \
   "$repo_root/supabase/tests/wave-selection-explain.test.sh"
+
+echo 'Checking dashboard query performance at 500 campaigns...'
+DATABASE_URL="$DATABASE_URL" \
+  "$repo_root/supabase/tests/dashboard-performance.test.sh"
 
 echo 'PASS: all database integration tests completed'
