@@ -54,11 +54,25 @@ export function InboxRealtimeProvider({
           void refresh()
         },
       )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "broadcast_campaigns" },
+        () => {
+          if (!active) return
+          setRevision((value) => value + 1)
+          window.dispatchEvent(new Event("ghostbuster:campaign-change"))
+        },
+      )
       .subscribe((status) => {
         if (!active) return
         const isConnected = status === "SUBSCRIBED"
         connectedRef.current = isConnected
         setConnected(isConnected)
+        window.dispatchEvent(
+          new CustomEvent("ghostbuster:realtime-status", {
+            detail: { connected: isConnected },
+          }),
+        )
         if (!isConnected) void refresh()
       })
 
